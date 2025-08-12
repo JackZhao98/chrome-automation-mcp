@@ -32,23 +32,55 @@ npm install
 npm install -g .
 ```
 
-### From npm (Coming Soon)
+### From npm
 
 ```bash
-# Will be available after publishing to npm
 npm install -g chrome-automation-mcp
+```
+
+**System Requirements:**
+- **macOS only** (macOS 10.15 or later)
+- **Google Chrome** must be installed (download from [chrome.google.com](https://chrome.google.com))
+
+**Installation Location:**
+- **macOS**: `/usr/local/lib/node_modules/chrome-automation-mcp`
+
+To find your global installation path:
+```bash
+npm root -g
 ```
 
 ## Usage
 
 ### As MCP Server
 
-Configure in your MCP client (e.g., Claude Desktop):
+#### Step 1: Install the Package
+Choose one of the installation methods above.
 
+#### Step 2: Configure MCP Client
+
+1. **Find your MCP client config file:**
+   - **Claude Desktop**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Other MCP clients**: Refer to your client's documentation
+
+2. **Add server configuration:**
+
+**Option A: If installed globally via npm:**
 ```json
 {
   "mcpServers": {
-    "browser-automation": {
+    "chrome-automation": {
+      "command": "chrome-automation-mcp"
+    }
+  }
+}
+```
+
+**Option B: If cloned from GitHub:**
+```json
+{
+  "mcpServers": {
+    "chrome-automation": {
       "command": "node",
       "args": ["/absolute/path/to/chrome-automation-mcp/bin/cli.js"]
     }
@@ -56,17 +88,14 @@ Configure in your MCP client (e.g., Claude Desktop):
 }
 ```
 
-Or if installed globally:
+#### Step 3: Restart MCP Client
+Close and restart your MCP client for the configuration to take effect.
 
-```json
-{
-  "mcpServers": {
-    "browser-automation": {
-      "command": "chrome-automation-mcp"
-    }
-  }
-}
-```
+#### Step 4: Verify Installation
+In your MCP client, you should now be able to use browser automation commands like:
+- "Launch a browser and go to google.com"
+- "Take a screenshot of the current page"
+- "Click on the search button"
 
 ### Programmatic Usage
 

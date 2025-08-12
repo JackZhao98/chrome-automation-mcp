@@ -32,23 +32,55 @@ npm install
 npm install -g .
 ```
 
-### 从 npm 安装（即将推出）
+### 从 npm 安装
 
 ```bash
-# 发布到 npm 后可用
 npm install -g chrome-automation-mcp
+```
+
+**系统要求：**
+- **仅支持 macOS**（macOS 10.15 或更高版本）
+- **必须安装 Google Chrome**（从 [chrome.google.com](https://chrome.google.com) 下载）
+
+**安装位置：**
+- **macOS**: `/usr/local/lib/node_modules/chrome-automation-mcp`
+
+查找全局安装路径：
+```bash
+npm root -g
 ```
 
 ## 使用方法
 
 ### 作为 MCP 服务器
 
-在您的 MCP 客户端（例如 Claude Desktop）中配置：
+#### 步骤 1：安装包
+选择上述安装方法之一。
 
+#### 步骤 2：配置 MCP 客户端
+
+1. **找到您的 MCP 客户端配置文件：**
+   - **Claude Desktop**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **其他 MCP 客户端**: 请参考您的客户端文档
+
+2. **添加服务器配置：**
+
+**选项 A：通过 npm 全局安装：**
 ```json
 {
   "mcpServers": {
-    "browser-automation": {
+    "chrome-automation": {
+      "command": "chrome-automation-mcp"
+    }
+  }
+}
+```
+
+**选项 B：从 GitHub 克隆：**
+```json
+{
+  "mcpServers": {
+    "chrome-automation": {
       "command": "node",
       "args": ["/absolute/path/to/chrome-automation-mcp/bin/cli.js"]
     }
@@ -56,17 +88,14 @@ npm install -g chrome-automation-mcp
 }
 ```
 
-或者如果全局安装：
+#### 步骤 3：重启 MCP 客户端
+关闭并重新启动您的 MCP 客户端使配置生效。
 
-```json
-{
-  "mcpServers": {
-    "browser-automation": {
-      "command": "chrome-automation-mcp"
-    }
-  }
-}
-```
+#### 步骤 4：验证安装
+在您的 MCP 客户端中，您现在应该能够使用浏览器自动化命令，如：
+- "启动浏览器并访问 google.com"
+- "对当前页面截图"
+- "点击搜索按钮"
 
 ### 编程使用
 
