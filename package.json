@@ -1,0 +1,46 @@
+{
+  "name": "browser-automation-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for browser automation with custom scripts",
+  "main": "index.js",
+  "bin": {
+    "browser-automation-mcp": "./bin/cli.js"
+  },
+  "files": [
+    "index.js",
+    "src/",
+    "bin/",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node bin/cli.js",
+    "dev": "node bin/cli.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "playwright": "^1.40.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "browser",
+    "automation",
+    "playwright",
+    "web-scraping",
+    "testing"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JackZhao98/browser-automation-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/JackZhao98/browser-automation-mcp/issues"
+  },
+  "homepage": "https://github.com/JackZhao98/browser-automation-mcp#readme"
+}
