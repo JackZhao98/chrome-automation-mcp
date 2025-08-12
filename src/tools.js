@@ -95,25 +95,6 @@ const toolDefinitions = [
     },
   },
   {
-    name: "click_visible",
-    description: "Click the first visible element matching selector",
-    inputSchema: {
-      type: "object",
-      properties: {
-        selector: {
-          type: "string",
-          description: "CSS selector",
-        },
-        timeout: {
-          type: "number",
-          description: "Timeout in milliseconds",
-          default: 5000,
-        },
-      },
-      required: ["selector"],
-    },
-  },
-  {
     name: "type_text",
     description: "Type text into an input field",
     inputSchema: {
@@ -181,48 +162,8 @@ const toolDefinitions = [
     },
   },
   {
-    name: "find_buttons",
-    description: "Find all buttons on the page",
-    inputSchema: {
-      type: "object",
-      properties: {
-        containing: {
-          type: "string",
-          description: "Optional text that button should contain",
-        },
-      },
-    },
-  },
-  {
-    name: "find_links",
-    description: "Find all links on the page",
-    inputSchema: {
-      type: "object",
-      properties: {
-        containing: {
-          type: "string",
-          description: "Optional text that link should contain",
-        },
-      },
-    },
-  },
-  {
-    name: "find_inputs",
-    description: "Find all input fields on the page",
-    inputSchema: {
-      type: "object",
-      properties: {
-        type: {
-          type: "string",
-          description:
-            "Input type to filter by (text, email, password, etc.)",
-        },
-      },
-    },
-  },
-  {
     name: "wait_for",
-    description: "Wait for an element or condition",
+    description: "Wait for an element or condition. Automatically switches to new tabs if element is not found on current page.",
     inputSchema: {
       type: "object",
       properties: {
@@ -240,6 +181,11 @@ const toolDefinitions = [
           type: "number",
           description: "Timeout in milliseconds",
           default: 10000,
+        },
+        switchToNewTab: {
+          type: "boolean",
+          description: "Automatically switch to new tabs if element is not found",
+          default: true,
         },
       },
       required: ["selector"],
@@ -289,7 +235,7 @@ const toolDefinitions = [
   },
   {
     name: "scroll",
-    description: "Scroll the page",
+    description: "Scroll the page to find elements that are not currently visible. Use this tool when elements are not found or not visible - they might be below the current viewport.",
     inputSchema: {
       type: "object",
       properties: {
@@ -316,22 +262,11 @@ const toolDefinitions = [
     },
   },
   {
-    name: "run_script",
-    description: "Execute a Playwright script file",
+    name: "go_back",
+    description: "Navigate back to the previous page in browser history",
     inputSchema: {
       type: "object",
-      properties: {
-        scriptPath: {
-          type: "string",
-          description: "Path to the JavaScript file to execute",
-        },
-        args: {
-          type: "object",
-          description: "Arguments to pass to the script",
-          default: {},
-        },
-      },
-      required: ["scriptPath"],
+      properties: {},
     },
   },
   {
@@ -364,6 +299,40 @@ const toolDefinitions = [
         },
       },
       required: ["code"],
+    },
+  },
+  {
+    name: "switch_to_latest_tab",
+    description: "Switch to the most recently opened tab",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "switch_to_tab",
+    description: "Switch to a specific tab by index or URL",
+    inputSchema: {
+      type: "object",
+      properties: {
+        index: {
+          type: "number",
+          description: "Tab index to switch to (0-based)",
+          default: 0,
+        },
+        url: {
+          type: "string",
+          description: "Partial URL to find and switch to",
+        },
+      },
+    },
+  },
+  {
+    name: "get_tabs",
+    description: "Get information about all open tabs",
+    inputSchema: {
+      type: "object",
+      properties: {},
     },
   },
   {
