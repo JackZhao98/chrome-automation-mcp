@@ -2,5 +2,9 @@
 
 const { ChromeAutomationServer } = require('../src/ChromeAutomationServer');
 
-const server = new ChromeAutomationServer();
-server.run().catch(console.error);
+async function main() {
+  const server = new ChromeAutomationServer();
+  await server.run();
+}
+
+main().catch(console.error);

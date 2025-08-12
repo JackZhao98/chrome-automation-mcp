@@ -1,15 +1,32 @@
-const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
-const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
-const {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} = require("@modelcontextprotocol/sdk/types.js");
 const { toolDefinitions } = require('./tools');
 const { toolHandlers } = require('./handlers');
 
 class ChromeAutomationServer {
   constructor() {
-    this.server = new Server(
+    this.server = null;
+    this.Server = null;
+    this.StdioServerTransport = null;
+    this.CallToolRequestSchema = null;
+    this.ListToolsRequestSchema = null;
+    
+    this.browser = null;
+    this.page = null;
+    this.debugPort = 9222;
+    this.chromeProcess = null;
+  }
+
+  async initialize() {
+    // Dynamic imports for ESM modules
+    const sdkServer = await import("@modelcontextprotocol/sdk/server/index.js");
+    const sdkStdio = await import("@modelcontextprotocol/sdk/server/stdio.js");
+    const sdkTypes = await import("@modelcontextprotocol/sdk/types.js");
+    
+    this.Server = sdkServer.Server;
+    this.StdioServerTransport = sdkStdio.StdioServerTransport;
+    this.CallToolRequestSchema = sdkTypes.CallToolRequestSchema;
+    this.ListToolsRequestSchema = sdkTypes.ListToolsRequestSchema;
+    
+    this.server = new this.Server(
       {
         name: "browser-mcp",
         version: "1.0.0",
@@ -20,11 +37,6 @@ class ChromeAutomationServer {
         },
       }
     );
-
-    this.browser = null;
-    this.page = null;
-    this.debugPort = 9222;
-    this.chromeProcess = null;
 
     this.setupToolHandlers();
 
@@ -57,11 +69,11 @@ class ChromeAutomationServer {
   }
 
   setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    this.server.setRequestHandler(this.ListToolsRequestSchema, async () => ({
       tools: toolDefinitions,
     }));
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(this.CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
       try {
@@ -86,7 +98,8 @@ class ChromeAutomationServer {
   }
 
   async run() {
-    const transport = new StdioServerTransport();
+    await this.initialize();
+    const transport = new this.StdioServerTransport();
     await this.server.connect(transport);
     console.error("[MCP] Browser Automation Server running on stdio");
   }
