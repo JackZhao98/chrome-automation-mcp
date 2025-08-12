@@ -163,7 +163,8 @@ const toolDefinitions = [
   },
   {
     name: "wait_for",
-    description: "Wait for an element or condition. Automatically switches to new tabs if element is not found on current page.",
+    description:
+      "Wait for an element or condition. Automatically switches to new tabs if element is not found on current page.",
     inputSchema: {
       type: "object",
       properties: {
@@ -184,7 +185,8 @@ const toolDefinitions = [
         },
         switchToNewTab: {
           type: "boolean",
-          description: "Automatically switch to new tabs if element is not found",
+          description:
+            "Automatically switch to new tabs if element is not found",
           default: true,
         },
       },
@@ -199,8 +201,7 @@ const toolDefinitions = [
       properties: {
         key: {
           type: "string",
-          description:
-            "Key to press (Enter, Escape, Tab, ArrowDown, etc.)",
+          description: "Key to press (Enter, Escape, Tab, ArrowDown, etc.)",
         },
         modifiers: {
           type: "array",
@@ -235,7 +236,8 @@ const toolDefinitions = [
   },
   {
     name: "scroll",
-    description: "Scroll the page to find elements that are not currently visible. Use this tool when elements are not found or not visible - they might be below the current viewport.",
+    description:
+      "Scroll the page to find elements that are not currently visible. Use this tool when elements are not found or not visible - they might be below the current viewport.",
     inputSchema: {
       type: "object",
       properties: {
@@ -271,17 +273,27 @@ const toolDefinitions = [
   },
   {
     name: "run_script",
-    description: "Execute a JavaScript file with access to browser and page objects",
+    description:
+      "Execute a JavaScript file with access to browser and page objects. For search scripts, always pass the search query in args.query field.",
     inputSchema: {
       type: "object",
       properties: {
         scriptPath: {
           type: "string",
-          description: "Path to the JavaScript file to execute",
+          description:
+            "Path to the JavaScript file to execute (e.g., 'scripts/search-google.js')",
         },
         args: {
           type: "object",
-          description: "Arguments to pass to the script",
+          description:
+            'Arguments to pass to the script. IMPORTANT: For search scripts, use \'query\' field to pass the search content (e.g., {"query": "your search term"})',
+          properties: {
+            query: {
+              type: "string",
+              description:
+                "Search query or question to ask (required for search scripts)",
+            },
+          },
           default: {},
         },
       },
