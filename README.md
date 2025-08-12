@@ -1,126 +1,254 @@
-# MCP Browser Automation Server
+# Browser Automation MCP
 
-一个通用的MCP服务器，用于通过Playwright控制Chrome浏览器并执行自定义脚本。
+A Model Context Protocol (MCP) server for browser automation using Playwright to control Chrome browsers and execute custom scripts.
 
-## 安装
+[![npm version](https://badge.fury.io/js/browser-automation-mcp.svg)](https://badge.fury.io/js/browser-automation-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## Features
+
+- 🚀 Launch and control Chrome browsers programmatically
+- 🔗 Connect to existing Chrome instances via debugging port
+- 📝 Execute custom JavaScript scripts with browser and page access
+- 🎯 Rich set of browser automation tools (click, type, scroll, screenshot, etc.)
+- 🔧 Both CLI and programmatic API support
+- 📦 Easy integration with Claude Desktop and other MCP clients
+
+## Installation
+
+### Global Installation (CLI)
 
 ```bash
-# 创建项目目录
-mkdir mcp-browser-automation
-cd mcp-browser-automation
-
-# 复制 package.json 和 index.js
-
-# 安装依赖
-npm install
+npm install -g browser-automation-mcp
 ```
 
-## 配置Claude Desktop
+### Local Installation (as dependency)
 
-1. 找到Claude Desktop配置文件：
-   - Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+```bash
+npm install browser-automation-mcp
+```
 
-2. 添加MCP服务器配置：
+## Usage
+
+### As MCP Server
+
+Configure in your MCP client (e.g., Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "browser-automation": {
+      "command": "browser-automation-mcp"
+    }
+  }
+}
+```
+
+Or with custom path:
 
 ```json
 {
   "mcpServers": {
     "browser-automation": {
       "command": "node",
-      "args": ["/absolute/path/to/mcp-browser-automation/index.js"],
-      "env": {}
+      "args": ["/path/to/node_modules/browser-automation-mcp/bin/cli.js"]
     }
   }
 }
 ```
 
-3. 重启Claude Desktop
-
-## 使用方法
-
-### 在Claude中使用MCP工具：
-
-1. **启动浏览器**
-```
-使用 launch_browser 工具，参数：
-- headless: false（显示浏览器窗口）
-- userDataDir: "/tmp/chrome-debug-mcp"
-- debugPort: 9222
-```
-
-2. **连接到已有浏览器**
-```
-使用 connect_browser 工具，参数：
-- debugPort: 9222
-```
-
-3. **运行脚本文件**
-```
-使用 run_script 工具，参数：
-- scriptPath: "/path/to/your/script.js"
-- args: { question: "你的问题" }
-```
-
-4. **直接执行代码**
-```
-使用 execute_code 工具，参数：
-- code: "await page.goto('https://google.com'); return await page.title();"
-```
-
-5. **关闭浏览器**
-```
-使用 close_browser 工具
-```
-
-## 脚本编写指南
-
-脚本可以访问以下变量：
-- `browser` - Playwright browser实例
-- `page` - 当前页面
-- `args` - 传入的参数对象
-
-### 示例脚本
+### Programmatic Usage
 
 ```javascript
-// chatgpt-ask.js
-const question = args.question || '默认问题';
+const { BrowserAutomationServer, createServer } = require('browser-automation-mcp');
 
-await page.goto('https://chat.openai.com/');
-await page.waitForTimeout(3000);
+// Method 1: Use convenience function
+const server = createServer();
+server.run();
 
-const input = await page.$('#prompt-textarea');
-await input.type(question);
-await page.keyboard.press('Enter');
-
-await page.waitForTimeout(5000);
-
-const response = await page.evaluate(() => {
-    const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
-    return messages.length > 0 ? messages[messages.length - 1].textContent : '无回复';
-});
-
-return { question, response };
+// Method 2: Create instance manually
+const server = new BrowserAutomationServer();
+server.run();
 ```
 
-## 在AI工作流中使用
+## Available Tools
 
-1. 先调用 `launch_browser` 或 `connect_browser` 建立连接
-2. 使用 `run_script` 执行你的自动化脚本
-3. 脚本返回的结果会传回给AI进行处理
-4. 最后调用 `close_browser` 清理资源
+### Browser Management
+- `launch_browser` - Launch Chrome with debugging port
+- `connect_browser` - Connect to existing Chrome instance
+- `close_browser` - Close browser connection
 
-## 注意事项
+### Navigation & Page Control
+- `navigate_to` - Navigate to URL
+- `get_page_info` - Get current page information
+- `screenshot` - Take page screenshot
+- `scroll` - Scroll page in specified direction
 
-- 脚本在Node.js环境中执行，可以使用Playwright的所有API
-- 确保Chrome以调试模式启动才能连接
-- 脚本执行错误会返回错误信息
-- 建议在脚本中添加适当的等待和错误处理
+### Element Interaction
+- `click` - Click on elements (by selector or text)
+- `click_visible` - Click first visible element
+- `type_text` - Type text into input fields
+- `press_key` - Press keyboard keys with modifiers
 
-## 故障排除
+### Content Extraction
+- `read_text` - Read text content from page/elements
+- `get_elements` - Get element information and attributes
+- `find_buttons` - Find all buttons on page
+- `find_links` - Find all links on page
+- `find_inputs` - Find all input fields
 
-如果连接失败：
-1. 确保Chrome正确启动：`chrome --remote-debugging-port=9222`
-2. 检查端口：访问 `http://127.0.0.1:9222/json/version`
-3. 查看MCP服务器日志
+### Advanced Operations
+- `wait_for` - Wait for elements/conditions
+- `evaluate` - Execute JavaScript in browser context
+- `execute_code` - Execute Playwright code in Node.js context
+- `run_script` - Execute external script files
 
+## Quick Start Example
+
+1. **Launch Browser**
+```json
+{
+  "tool": "launch_browser",
+  "arguments": {
+    "headless": false,
+    "debugPort": 9222
+  }
+}
+```
+
+2. **Navigate to Website**
+```json
+{
+  "tool": "navigate_to",
+  "arguments": {
+    "url": "https://example.com"
+  }
+}
+```
+
+3. **Take Screenshot**
+```json
+{
+  "tool": "screenshot",
+  "arguments": {
+    "fullPage": true
+  }
+}
+```
+
+## Script Development
+
+When using `run_script` or `execute_code`, you have access to:
+- `browser` - Playwright browser instance
+- `page` - Current page object
+- `args` - Passed arguments object
+
+### Example Script
+
+```javascript
+// example-script.js
+const searchQuery = args.query || 'default search';
+
+// Navigate to Google
+await page.goto('https://google.com');
+
+// Search
+await page.fill('input[name="q"]', searchQuery);
+await page.press('input[name="q"]', 'Enter');
+
+// Wait for results
+await page.waitForSelector('h3');
+
+// Get first result
+const firstResult = await page.textContent('h3');
+
+return {
+  query: searchQuery,
+  firstResult: firstResult
+};
+```
+
+## Configuration Options
+
+### Launch Browser Options
+- `headless` (boolean) - Run in headless mode (default: false)
+- `userDataDir` (string) - Chrome user data directory
+- `debugPort` (number) - Remote debugging port (default: 9222)
+
+### Tool-Specific Options
+Most tools support:
+- `timeout` - Operation timeout in milliseconds
+- `force` - Force action even if element not visible
+- `selector` - CSS selector for element targeting
+
+## Integration Examples
+
+### With Claude Desktop
+
+1. Install globally: `npm install -g browser-automation-mcp`
+2. Add to Claude Desktop config
+3. Restart Claude Desktop
+4. Use natural language to control browsers!
+
+Example conversation:
+> "Please open Google, search for 'MCP servers', and take a screenshot"
+
+### Custom MCP Client
+
+```javascript
+const { spawn } = require('child_process');
+
+const mcpServer = spawn('browser-automation-mcp');
+
+// Send MCP requests via stdin
+// Handle responses via stdout
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Connection Failed**
+   - Ensure Chrome allows remote debugging
+   - Check if port is already in use
+   - Verify firewall settings
+
+2. **Element Not Found**
+   - Use `wait_for` before interacting with elements
+   - Check if element is in correct frame/context
+   - Try different selector strategies
+
+3. **Script Execution Errors**
+   - Validate JavaScript syntax
+   - Check for typos in variable names
+   - Add error handling in scripts
+
+### Debug Mode
+
+Launch with debug logging:
+```bash
+DEBUG=browser-automation-mcp browser-automation-mcp
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature-name`
+3. Commit changes: `git commit -am 'Add feature'`
+4. Push branch: `git push origin feature-name`
+5. Submit pull request
+
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## Links
+
+- [GitHub Repository](https://github.com/JackZhao98/browser-automation-mcp)
+- [npm Package](https://www.npmjs.com/package/browser-automation-mcp)
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Playwright Documentation](https://playwright.dev/)
+
+---
+
+Built with ❤️ for the MCP ecosystem
