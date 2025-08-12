@@ -71,14 +71,14 @@ Or if installed globally:
 ### Programmatic Usage
 
 ```javascript
-const { BrowserAutomationServer, createServer } = require('chrome-automation-mcp');
+const { ChromeAutomationServer, createServer } = require('chrome-automation-mcp');
 
 // Method 1: Use convenience function
 const server = createServer();
 server.run();
 
 // Method 2: Create instance manually
-const server = new BrowserAutomationServer();
+const server = new ChromeAutomationServer();
 server.run();
 ```
 

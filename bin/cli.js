@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { BrowserAutomationServer } = require('../src/BrowserAutomationServer');
+const { ChromeAutomationServer } = require('../src/ChromeAutomationServer');
 
-const server = new BrowserAutomationServer();
+const server = new ChromeAutomationServer();
 server.run().catch(console.error);

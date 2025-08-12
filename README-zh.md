@@ -1,4 +1,4 @@
-# Browser Automation MCP
+# Chrome Automation MCP
 
 *Read this document in English: [README.md](README.md)*
 
@@ -71,14 +71,14 @@ npm install -g chrome-automation-mcp
 ### 编程使用
 
 ```javascript
-const { BrowserAutomationServer, createServer } = require('chrome-automation-mcp');
+const { ChromeAutomationServer, createServer } = require('chrome-automation-mcp');
 
 // 方法 1：使用便利函数
 const server = createServer();
 server.run();
 
 // 方法 2：手动创建实例
-const server = new BrowserAutomationServer();
+const server = new ChromeAutomationServer();
 server.run();
 ```
 

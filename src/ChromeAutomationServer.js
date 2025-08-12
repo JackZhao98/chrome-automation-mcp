@@ -7,7 +7,7 @@ const {
 const { toolDefinitions } = require('./tools');
 const { toolHandlers } = require('./handlers');
 
-class BrowserAutomationServer {
+class ChromeAutomationServer {
   constructor() {
     this.server = new Server(
       {
@@ -92,4 +92,4 @@ class BrowserAutomationServer {
   }
 }
 
-module.exports = { BrowserAutomationServer };
+module.exports = { ChromeAutomationServer };
