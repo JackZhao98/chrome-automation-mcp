@@ -1,5 +1,7 @@
 # Browser Automation MCP
 
+*中文版：[README-zh.md](README-zh.md)*
+
 A Model Context Protocol (MCP) server for browser automation using Playwright to control Chrome browsers and execute custom scripts.
 
 [![npm version](https://badge.fury.io/js/browser-automation-mcp.svg)](https://badge.fury.io/js/browser-automation-mcp)
@@ -16,16 +18,25 @@ A Model Context Protocol (MCP) server for browser automation using Playwright to
 
 ## Installation
 
-### Global Installation (CLI)
+### From GitHub
 
 ```bash
-npm install -g browser-automation-mcp
+# Clone the repository
+git clone https://github.com/JackZhao98/browser-automation-mcp.git
+cd browser-automation-mcp
+
+# Install dependencies
+npm install
+
+# Optional: Install globally
+npm install -g .
 ```
 
-### Local Installation (as dependency)
+### From npm (Coming Soon)
 
 ```bash
-npm install browser-automation-mcp
+# Will be available after publishing to npm
+npm install -g browser-automation-mcp
 ```
 
 ## Usage
@@ -38,20 +49,20 @@ Configure in your MCP client (e.g., Claude Desktop):
 {
   "mcpServers": {
     "browser-automation": {
-      "command": "browser-automation-mcp"
+      "command": "node",
+      "args": ["/absolute/path/to/browser-automation-mcp/bin/cli.js"]
     }
   }
 }
 ```
 
-Or with custom path:
+Or if installed globally:
 
 ```json
 {
   "mcpServers": {
     "browser-automation": {
-      "command": "node",
-      "args": ["/path/to/node_modules/browser-automation-mcp/bin/cli.js"]
+      "command": "browser-automation-mcp"
     }
   }
 }
@@ -185,8 +196,8 @@ Most tools support:
 
 ### With Claude Desktop
 
-1. Install globally: `npm install -g browser-automation-mcp`
-2. Add to Claude Desktop config
+1. Clone and install: Follow installation instructions above
+2. Add to Claude Desktop config with absolute path
 3. Restart Claude Desktop
 4. Use natural language to control browsers!
 
