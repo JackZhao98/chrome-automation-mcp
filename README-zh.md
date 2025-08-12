@@ -4,7 +4,7 @@
 
 一个使用 Playwright 控制 Chrome 浏览器并执行自定义脚本的模型上下文协议（MCP）服务器。
 
-[![npm version](https://badge.fury.io/js/browser-automation-mcp.svg)](https://badge.fury.io/js/browser-automation-mcp)
+[![npm version](https://badge.fury.io/js/chrome-automation-mcp.svg)](https://badge.fury.io/js/chrome-automation-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 功能特性
@@ -22,8 +22,8 @@
 
 ```bash
 # 克隆代码库
-git clone https://github.com/JackZhao98/browser-automation-mcp.git
-cd browser-automation-mcp
+git clone https://github.com/JackZhao98/chrome-automation-mcp.git
+cd chrome-automation-mcp
 
 # 安装依赖
 npm install
@@ -36,7 +36,7 @@ npm install -g .
 
 ```bash
 # 发布到 npm 后可用
-npm install -g browser-automation-mcp
+npm install -g chrome-automation-mcp
 ```
 
 ## 使用方法
@@ -50,7 +50,7 @@ npm install -g browser-automation-mcp
   "mcpServers": {
     "browser-automation": {
       "command": "node",
-      "args": ["/absolute/path/to/browser-automation-mcp/bin/cli.js"]
+      "args": ["/absolute/path/to/chrome-automation-mcp/bin/cli.js"]
     }
   }
 }
@@ -62,7 +62,7 @@ npm install -g browser-automation-mcp
 {
   "mcpServers": {
     "browser-automation": {
-      "command": "browser-automation-mcp"
+      "command": "chrome-automation-mcp"
     }
   }
 }
@@ -71,7 +71,7 @@ npm install -g browser-automation-mcp
 ### 编程使用
 
 ```javascript
-const { BrowserAutomationServer, createServer } = require('browser-automation-mcp');
+const { BrowserAutomationServer, createServer } = require('chrome-automation-mcp');
 
 // 方法 1：使用便利函数
 const server = createServer();
@@ -209,7 +209,7 @@ return {
 ```javascript
 const { spawn } = require('child_process');
 
-const mcpServer = spawn('browser-automation-mcp');
+const mcpServer = spawn('chrome-automation-mcp');
 
 // 通过 stdin 发送 MCP 请求
 // 通过 stdout 处理响应
@@ -238,7 +238,7 @@ const mcpServer = spawn('browser-automation-mcp');
 
 使用调试日志启动：
 ```bash
-DEBUG=browser-automation-mcp browser-automation-mcp
+DEBUG=chrome-automation-mcp chrome-automation-mcp
 ```
 
 ## 贡献
@@ -255,8 +255,8 @@ MIT 许可证 - 详情请查看 [LICENSE](LICENSE) 文件。
 
 ## 链接
 
-- [GitHub 代码库](https://github.com/JackZhao98/browser-automation-mcp)
-- [npm 包](https://www.npmjs.com/package/browser-automation-mcp)
+- [GitHub 代码库](https://github.com/JackZhao98/chrome-automation-mcp)
+- [npm 包](https://www.npmjs.com/package/chrome-automation-mcp)
 - [模型上下文协议](https://modelcontextprotocol.io/)
 - [Playwright 文档](https://playwright.dev/)
 

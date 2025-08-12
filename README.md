@@ -1,10 +1,10 @@
-# Browser Automation MCP
+# Chrome Automation MCP
 
 *中文版：[README-zh.md](README-zh.md)*
 
 A Model Context Protocol (MCP) server for browser automation using Playwright to control Chrome browsers and execute custom scripts.
 
-[![npm version](https://badge.fury.io/js/browser-automation-mcp.svg)](https://badge.fury.io/js/browser-automation-mcp)
+[![npm version](https://badge.fury.io/js/chrome-automation-mcp.svg)](https://badge.fury.io/js/chrome-automation-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
@@ -22,8 +22,8 @@ A Model Context Protocol (MCP) server for browser automation using Playwright to
 
 ```bash
 # Clone the repository
-git clone https://github.com/JackZhao98/browser-automation-mcp.git
-cd browser-automation-mcp
+git clone https://github.com/JackZhao98/chrome-automation-mcp.git
+cd chrome-automation-mcp
 
 # Install dependencies
 npm install
@@ -36,7 +36,7 @@ npm install -g .
 
 ```bash
 # Will be available after publishing to npm
-npm install -g browser-automation-mcp
+npm install -g chrome-automation-mcp
 ```
 
 ## Usage
@@ -50,7 +50,7 @@ Configure in your MCP client (e.g., Claude Desktop):
   "mcpServers": {
     "browser-automation": {
       "command": "node",
-      "args": ["/absolute/path/to/browser-automation-mcp/bin/cli.js"]
+      "args": ["/absolute/path/to/chrome-automation-mcp/bin/cli.js"]
     }
   }
 }
@@ -62,7 +62,7 @@ Or if installed globally:
 {
   "mcpServers": {
     "browser-automation": {
-      "command": "browser-automation-mcp"
+      "command": "chrome-automation-mcp"
     }
   }
 }
@@ -71,7 +71,7 @@ Or if installed globally:
 ### Programmatic Usage
 
 ```javascript
-const { BrowserAutomationServer, createServer } = require('browser-automation-mcp');
+const { BrowserAutomationServer, createServer } = require('chrome-automation-mcp');
 
 // Method 1: Use convenience function
 const server = createServer();
@@ -209,7 +209,7 @@ Example conversation:
 ```javascript
 const { spawn } = require('child_process');
 
-const mcpServer = spawn('browser-automation-mcp');
+const mcpServer = spawn('chrome-automation-mcp');
 
 // Send MCP requests via stdin
 // Handle responses via stdout
@@ -238,7 +238,7 @@ const mcpServer = spawn('browser-automation-mcp');
 
 Launch with debug logging:
 ```bash
-DEBUG=browser-automation-mcp browser-automation-mcp
+DEBUG=chrome-automation-mcp chrome-automation-mcp
 ```
 
 ## Contributing
@@ -255,8 +255,8 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Links
 
-- [GitHub Repository](https://github.com/JackZhao98/browser-automation-mcp)
-- [npm Package](https://www.npmjs.com/package/browser-automation-mcp)
+- [GitHub Repository](https://github.com/JackZhao98/chrome-automation-mcp)
+- [npm Package](https://www.npmjs.com/package/chrome-automation-mcp)
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 - [Playwright Documentation](https://playwright.dev/)
 

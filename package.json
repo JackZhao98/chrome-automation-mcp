@@ -1,10 +1,10 @@
 {
-  "name": "browser-automation-mcp",
+  "name": "chrome-automation-mcp",
   "version": "1.0.0",
   "description": "MCP server for browser automation with custom scripts",
   "main": "index.js",
   "bin": {
-    "browser-automation-mcp": "./bin/cli.js"
+    "chrome-automation-mcp": "./bin/cli.js"
   },
   "files": [
     "index.js",
@@ -37,10 +37,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/JackZhao98/browser-automation-mcp"
+    "url": "https://github.com/JackZhao98/chrome-automation-mcp"
   },
   "bugs": {
-    "url": "https://github.com/JackZhao98/browser-automation-mcp/issues"
+    "url": "https://github.com/JackZhao98/chrome-automation-mcp/issues"
   },
-  "homepage": "https://github.com/JackZhao98/browser-automation-mcp#readme"
+  "homepage": "https://github.com/JackZhao98/chrome-automation-mcp#readme"
 }
