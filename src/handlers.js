@@ -1,6 +1,7 @@
 const { chromium } = require("playwright");
 const { spawn, exec } = require("child_process");
 const { promisify } = require("util");
+const fs = require("fs").promises;
 const path = require("path");
 const os = require("os");
 
@@ -606,6 +607,47 @@ const toolHandlers = {
         },
       ],
     };
+  },
+
+  run_script: async function(args) {
+    const { scriptPath, args: scriptArgs = {} } = args;
+
+    if (!this.browser || !this.page) {
+      throw new Error(
+        "Browser not connected. Use launch_browser or connect_browser first."
+      );
+    }
+
+    console.error("[MCP] Running script:", scriptPath);
+
+    // Read the script file
+    const scriptContent = await fs.readFile(scriptPath, "utf-8");
+
+    // Create an async function and execute it
+    try {
+      const AsyncFunction = Object.getPrototypeOf(
+        async function () {}
+      ).constructor;
+      const fn = new AsyncFunction("browser", "page", "args", scriptContent);
+      const result = await fn(this.browser, this.page, scriptArgs);
+
+      console.error("[MCP] Script executed successfully");
+
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              typeof result === "string"
+                ? result
+                : JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("[MCP] Script execution failed:", error);
+      throw new Error(`Script execution failed: ${error.message}`);
+    }
   },
 
 

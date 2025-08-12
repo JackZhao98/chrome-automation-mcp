@@ -11,9 +11,11 @@ A Model Context Protocol (MCP) server for browser automation using Playwright to
 
 - 🚀 Launch and control Chrome browsers programmatically
 - 🔗 Connect to existing Chrome instances via debugging port
+- 📱 **Smart tab management** - Auto-switch to new tabs, handle popup windows
+- 🎯 **Intelligent element finding** - Auto-scroll when elements aren't visible
 - 📝 Execute custom JavaScript scripts with browser and page access
-- 🎯 Rich set of browser automation tools (click, type, scroll, screenshot, etc.)
-- 🔧 Both CLI and programmatic API support
+- 🔧 **20 streamlined tools** - Eliminated redundancy, cleaner API
+- 🎪 Rich browser automation (click, type, scroll, screenshot, navigate)
 - 📦 Easy integration with Claude Desktop and other MCP clients
 
 ## Installation
@@ -111,37 +113,49 @@ const server = new ChromeAutomationServer();
 server.run();
 ```
 
-## Available Tools
+## Available Tools (20 Core Tools)
 
-### Browser Management
+*Streamlined from 24 tools to 20 essential tools, eliminating redundancy while maintaining full functionality.*
+
+**Recent Improvements:**
+- ✅ Removed redundant tools (`click_visible`, `find_*` functions, `get_current_url`)
+- ✅ Enhanced error messages with actionable suggestions
+- ✅ Added smart tab switching for popup handling
+- ✅ Improved element visibility detection and auto-scrolling
+
+### 🚀 Browser Management (3 tools)
 - `launch_browser` - Launch Chrome with debugging port
-- `connect_browser` - Connect to existing Chrome instance
+- `connect_browser` - Connect to existing Chrome instance  
 - `close_browser` - Close browser connection
 
-### Navigation & Page Control
+### 📍 Navigation (2 tools)
 - `navigate_to` - Navigate to URL
-- `get_page_info` - Get current page information
-- `screenshot` - Take page screenshot
-- `scroll` - Scroll page in specified direction
+- `go_back` - Navigate back to previous page in browser history
 
-### Element Interaction
-- `click` - Click on elements (by selector or text)
-- `click_visible` - Click first visible element
+### 🎯 Page Interaction (4 tools)
+- `click` - Click on elements (by selector or text, with automatic visibility detection)
 - `type_text` - Type text into input fields
 - `press_key` - Press keyboard keys with modifiers
+- `scroll` - Scroll page to find elements not currently visible
 
-### Content Extraction
+### 📊 Information Gathering (3 tools)
+- `get_elements` - Get element information and attributes (replaces find_buttons/find_links/find_inputs)
 - `read_text` - Read text content from page/elements
-- `get_elements` - Get element information and attributes
-- `find_buttons` - Find all buttons on page
-- `find_links` - Find all links on page
-- `find_inputs` - Find all input fields
+- `get_page_info` - Get current page information (includes URL, title, viewport, etc.)
 
-### Advanced Operations
-- `wait_for` - Wait for elements/conditions
-- `evaluate` - Execute JavaScript in browser context
+### ⏳ State & Timing (2 tools)
+- `wait_for` - Wait for elements/conditions (auto-switches to new tabs when needed)
+- `screenshot` - Take page screenshot
+
+### 🖥️ Tab Management (3 tools)
+- `switch_to_latest_tab` - Switch to the most recently opened tab
+- `switch_to_tab` - Switch to specific tab by index or URL
+- `get_tabs` - Get information about all open tabs
+
+### 💻 Code Execution (3 tools)
+- `run_script` - Execute external JavaScript files with browser/page access
 - `execute_code` - Execute Playwright code in Node.js context
-- `run_script` - Execute external script files
+- `evaluate` - Execute JavaScript in browser context
 
 ## Quick Start Example
 
@@ -176,37 +190,87 @@ server.run();
 }
 ```
 
-## Script Development
+## Advanced Features
 
-When using `run_script` or `execute_code`, you have access to:
-- `browser` - Playwright browser instance
-- `page` - Current page object
-- `args` - Passed arguments object
+### Smart Tab Handling
+The `wait_for` tool automatically detects and switches to new tabs when elements aren't found:
 
-### Example Script
+```json
+{
+  "tool": "click", 
+  "arguments": {"selector": "a[target='_blank']"}
+}
+// Opens new tab
+
+{
+  "tool": "wait_for",
+  "arguments": {"selector": ".new-page-content"}
+}
+// Automatically switches to new tab and waits for element
+```
+
+### Intelligent Element Finding
+Tools provide helpful guidance when elements aren't visible:
+
+```json
+{
+  "tool": "click",
+  "arguments": {"selector": ".button-at-bottom"}
+}
+// If element not found: "Try using the 'scroll' tool to scroll down..."
+```
+
+### Script Development
+
+**Two ways to execute custom code:**
+
+#### 1. External Script Files (`run_script`)
+Create a `.js` file and execute it with the MCP:
 
 ```javascript
-// example-script.js
-const searchQuery = args.query || 'default search';
+// my-automation-script.js
+const searchQuery = args.query || 'MCP servers';
 
 // Navigate to Google
 await page.goto('https://google.com');
 
 // Search
 await page.fill('input[name="q"]', searchQuery);
-await page.press('input[name="q"]', 'Enter');
+await page.keyboard.press('Enter');
 
-// Wait for results
+// Wait for results (auto-switches to new tab if needed)
 await page.waitForSelector('h3');
 
-// Get first result
-const firstResult = await page.textContent('h3');
+// Get all results
+const results = await page.$$eval('h3', els => 
+  els.map(el => el.textContent)
+);
 
-return {
+return { 
   query: searchQuery,
-  firstResult: firstResult
+  searchResults: results,
+  count: results.length
 };
 ```
+
+Then use: `{"tool": "run_script", "arguments": {"scriptPath": "./my-automation-script.js", "args": {"query": "playwright automation"}}}`
+
+#### 2. Inline Code (`execute_code`)
+Execute code directly without creating files:
+
+```javascript
+// Direct code execution
+await page.goto('https://google.com');
+await page.fill('input[name="q"]', 'MCP servers');
+await page.keyboard.press('Enter');
+await page.waitForSelector('h3');
+return await page.$$eval('h3', els => els.map(el => el.textContent));
+```
+
+**Both methods have access to:**
+- `browser` - Playwright browser instance  
+- `page` - Current page object
+- `args` - Passed arguments (run_script only)
 
 ## Configuration Options
 
@@ -254,12 +318,19 @@ const mcpServer = spawn('chrome-automation-mcp');
    - Verify firewall settings
 
 2. **Element Not Found**
+   - **NEW**: Tools now auto-suggest using `scroll` when elements aren't visible
+   - **NEW**: `click` tool automatically tries scrolling once before failing
    - Use `wait_for` before interacting with elements
    - Check if element is in correct frame/context
    - Try different selector strategies
 
-3. **Script Execution Errors**
-   - Validate JavaScript syntax
+3. **New Tab Issues** 
+   - **FIXED**: `wait_for` automatically switches to new tabs
+   - Use `get_tabs` to see all open tabs
+   - Use `switch_to_latest_tab` to manually switch tabs
+
+4. **Script Execution Errors**
+   - Validate JavaScript syntax  
    - Check for typos in variable names
    - Add error handling in scripts
 

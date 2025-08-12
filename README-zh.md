@@ -11,9 +11,11 @@
 
 - 🚀 以编程方式启动和控制 Chrome 浏览器
 - 🔗 通过调试端口连接到现有的 Chrome 实例
+- 📱 **智能标签页管理** - 自动切换到新标签页，处理弹窗窗口
+- 🎯 **智能元素查找** - 元素不可见时自动滚动查找
 - 📝 执行自定义 JavaScript 脚本，可访问浏览器和页面对象
-- 🎯 丰富的浏览器自动化工具集（点击、输入、滚动、截图等）
-- 🔧 支持 CLI 和编程 API
+- 🔧 **20个精简工具** - 消除冗余，更清洁的API
+- 🎪 丰富的浏览器自动化（点击、输入、滚动、截图、导航）
 - 📦 轻松集成 Claude Desktop 和其他 MCP 客户端
 
 ## 安装
@@ -111,37 +113,49 @@ const server = new ChromeAutomationServer();
 server.run();
 ```
 
-## 可用工具
+## 可用工具（20个核心工具）
 
-### 浏览器管理
+*从24个工具精简为20个核心工具，消除冗余的同时保持完整功能。*
+
+**最新改进：**
+- ✅ 移除冗余工具（`click_visible`、`find_*` 函数、`get_current_url`）
+- ✅ 增强错误消息，提供可操作的建议
+- ✅ 添加智能标签页切换以处理弹窗
+- ✅ 改进元素可见性检测和自动滚动
+
+### 🚀 浏览器管理（3个工具）
 - `launch_browser` - 启动带调试端口的 Chrome
-- `connect_browser` - 连接到现有的 Chrome 实例
+- `connect_browser` - 连接到现有的 Chrome 实例  
 - `close_browser` - 关闭浏览器连接
 
-### 导航与页面控制
+### 📍 导航（2个工具）
 - `navigate_to` - 导航到指定 URL
-- `get_page_info` - 获取当前页面信息
-- `screenshot` - 截取页面屏幕截图
-- `scroll` - 向指定方向滚动页面
+- `go_back` - 返回到浏览器历史记录的上一页
 
-### 元素交互
-- `click` - 点击元素（通过选择器或文本）
-- `click_visible` - 点击第一个可见元素
+### 🎯 页面交互（4个工具）
+- `click` - 点击元素（通过选择器或文本，带自动可见性检测）
 - `type_text` - 在输入字段中输入文本
 - `press_key` - 按下带修饰符的键盘按键
+- `scroll` - 滚动页面以查找当前不可见的元素
 
-### 内容提取
+### 📊 信息收集（3个工具）
+- `get_elements` - 获取元素信息和属性（替代 find_buttons/find_links/find_inputs）
 - `read_text` - 从页面/元素读取文本内容
-- `get_elements` - 获取元素信息和属性
-- `find_buttons` - 查找页面上的所有按钮
-- `find_links` - 查找页面上的所有链接
-- `find_inputs` - 查找所有输入字段
+- `get_page_info` - 获取当前页面信息（包含 URL、标题、视口等）
 
-### 高级操作
-- `wait_for` - 等待元素/条件
-- `evaluate` - 在浏览器上下文中执行 JavaScript
+### ⏳ 状态与时机（2个工具）
+- `wait_for` - 等待元素/条件（需要时自动切换到新标签页）
+- `screenshot` - 截取页面屏幕截图
+
+### 🖥️ 标签页管理（3个工具）
+- `switch_to_latest_tab` - 切换到最近打开的标签页
+- `switch_to_tab` - 通过索引或 URL 切换到特定标签页
+- `get_tabs` - 获取所有打开标签页的信息
+
+### 💻 代码执行（3个工具）
+- `run_script` - 执行外部 JavaScript 文件，可访问浏览器/页面对象
 - `execute_code` - 在 Node.js 上下文中执行 Playwright 代码
-- `run_script` - 执行外部脚本文件
+- `evaluate` - 在浏览器上下文中执行 JavaScript
 
 ## 快速开始示例
 
@@ -176,37 +190,87 @@ server.run();
 }
 ```
 
+## 高级功能
+
+### 智能标签页处理
+`wait_for` 工具会在找不到元素时自动检测并切换到新标签页：
+
+```json
+{
+  "tool": "click", 
+  "arguments": {"selector": "a[target='_blank']"}
+}
+// 打开新标签页
+
+{
+  "tool": "wait_for",
+  "arguments": {"selector": ".new-page-content"}
+}
+// 自动切换到新标签页并等待元素
+```
+
+### 智能元素查找
+工具会在元素不可见时提供有用的指导：
+
+```json
+{
+  "tool": "click",
+  "arguments": {"selector": ".button-at-bottom"}
+}
+// 如果找不到元素："尝试使用 'scroll' 工具向下滚动..."
+```
+
 ## 脚本开发
 
-当使用 `run_script` 或 `execute_code` 时，您可以访问：
-- `browser` - Playwright 浏览器实例
-- `page` - 当前页面对象
-- `args` - 传递的参数对象
+**两种执行自定义代码的方式：**
 
-### 示例脚本
+### 1. 外部脚本文件 (`run_script`)
+创建一个 `.js` 文件并通过 MCP 执行：
 
 ```javascript
-// example-script.js
-const searchQuery = args.query || 'default search';
+// my-automation-script.js
+const searchQuery = args.query || 'MCP 服务器';
 
 // 导航到 Google
 await page.goto('https://google.com');
 
 // 搜索
 await page.fill('input[name="q"]', searchQuery);
-await page.press('input[name="q"]', 'Enter');
+await page.keyboard.press('Enter');
 
-// 等待结果
+// 等待结果（需要时自动切换到新标签页）
 await page.waitForSelector('h3');
 
-// 获取第一个结果
-const firstResult = await page.textContent('h3');
+// 获取所有结果
+const results = await page.$$eval('h3', els => 
+  els.map(el => el.textContent)
+);
 
-return {
+return { 
   query: searchQuery,
-  firstResult: firstResult
+  searchResults: results,
+  count: results.length
 };
 ```
+
+然后使用：`{"tool": "run_script", "arguments": {"scriptPath": "./my-automation-script.js", "args": {"query": "playwright 自动化"}}}`
+
+### 2. 内联代码 (`execute_code`)
+直接执行代码而无需创建文件：
+
+```javascript
+// 直接代码执行
+await page.goto('https://google.com');
+await page.fill('input[name="q"]', 'MCP 服务器');
+await page.keyboard.press('Enter');
+await page.waitForSelector('h3');
+return await page.$$eval('h3', els => els.map(el => el.textContent));
+```
+
+**两种方法都可以访问：**
+- `browser` - Playwright 浏览器实例  
+- `page` - 当前页面对象
+- `args` - 传递的参数（仅限 run_script）
 
 ## 配置选项
 
@@ -254,12 +318,19 @@ const mcpServer = spawn('chrome-automation-mcp');
    - 验证防火墙设置
 
 2. **找不到元素**
+   - **新功能**：工具现在会自动建议使用 `scroll` 当元素不可见时
+   - **新功能**：`click` 工具会在失败前自动尝试滚动一次
    - 在与元素交互前使用 `wait_for`
    - 检查元素是否在正确的框架/上下文中
    - 尝试不同的选择器策略
 
-3. **脚本执行错误**
-   - 验证 JavaScript 语法
+3. **新标签页问题** 
+   - **已修复**：`wait_for` 自动切换到新标签页
+   - 使用 `get_tabs` 查看所有打开的标签页
+   - 使用 `switch_to_latest_tab` 手动切换标签页
+
+4. **脚本执行错误**
+   - 验证 JavaScript 语法  
    - 检查变量名的拼写错误
    - 在脚本中添加错误处理
 

@@ -270,6 +270,25 @@ const toolDefinitions = [
     },
   },
   {
+    name: "run_script",
+    description: "Execute a JavaScript file with access to browser and page objects",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scriptPath: {
+          type: "string",
+          description: "Path to the JavaScript file to execute",
+        },
+        args: {
+          type: "object",
+          description: "Arguments to pass to the script",
+          default: {},
+        },
+      },
+      required: ["scriptPath"],
+    },
+  },
+  {
     name: "execute_code",
     description:
       "Execute Playwright code in Node.js context (use for page.goto, page.click, etc.)",
