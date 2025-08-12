@@ -8,7 +8,7 @@ const os = require("os");
 const execAsync = promisify(exec);
 
 const toolHandlers = {
-  launch_browser: async function(args) {
+  launch_browser: async function (args) {
     const {
       headless = false,
       userDataDir = "/tmp/chrome-debug-mcp",
@@ -98,7 +98,7 @@ const toolHandlers = {
     }
   },
 
-  connect_browser: async function(args) {
+  connect_browser: async function (args) {
     const { debugPort = 9222 } = args;
 
     console.error("[MCP] Connecting to browser on port:", debugPort);
@@ -130,7 +130,7 @@ const toolHandlers = {
     }
   },
 
-  navigate_to: async function(args) {
+  navigate_to: async function (args) {
     const { url, waitUntil = "networkidle" } = args;
 
     if (!this.page) {
@@ -152,7 +152,7 @@ const toolHandlers = {
     };
   },
 
-  click: async function(args) {
+  click: async function (args) {
     const {
       selector,
       clickByText = false,
@@ -183,7 +183,9 @@ const toolHandlers = {
           );
           await elements[index].click({ timeout, force });
         } else {
-          throw new Error(`No elements found with text: ${selector}. Try scrolling down using the 'scroll' tool to find more content, or use a more specific selector.`);
+          throw new Error(
+            `No elements found with text: ${selector}. Try scrolling down using the 'scroll' tool to find more content, or use a more specific selector.`
+          );
         }
       } else {
         // Try to find all matching elements and click the visible one
@@ -191,16 +193,20 @@ const toolHandlers = {
 
         if (elements.length === 0) {
           // Try scrolling down to find the element
-          console.error("[MCP] Element not found, trying to scroll down to find it");
+          console.error(
+            "[MCP] Element not found, trying to scroll down to find it"
+          );
           await this.page.evaluate(() => {
             window.scrollBy(0, 500);
           });
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for scroll
-          
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for scroll
+
           // Try again after scrolling
           const elementsAfterScroll = await this.page.$$(selector);
           if (elementsAfterScroll.length === 0) {
-            throw new Error(`No elements found for selector: ${selector}. Tried scrolling down but element still not found. The element might be further down the page - use the 'scroll' tool to scroll more, or check if the selector is correct.`);
+            throw new Error(
+              `No elements found for selector: ${selector}. Tried scrolling down but element still not found. The element might be further down the page - use the 'scroll' tool to scroll more, or check if the selector is correct.`
+            );
           }
           elements = elementsAfterScroll;
         }
@@ -270,8 +276,7 @@ const toolHandlers = {
     }
   },
 
-
-  type_text: async function(args) {
+  type_text: async function (args) {
     const { selector, text, clear = true, delay = 50 } = args;
 
     if (!this.page) {
@@ -284,7 +289,9 @@ const toolHandlers = {
 
     const element = await this.page.$(selector);
     if (!element) {
-      throw new Error(`Input element not found: ${selector}. The element might be below the current view. Try using the 'scroll' tool to scroll down and find the input field.`);
+      throw new Error(
+        `Input element not found: ${selector}. The element might be below the current view. Try using the 'scroll' tool to scroll down and find the input field.`
+      );
     }
 
     if (clear) {
@@ -307,7 +314,7 @@ const toolHandlers = {
     };
   },
 
-  read_text: async function(args = {}) {
+  read_text: async function (args = {}) {
     const { selector, all = false } = args;
 
     if (!this.page) {
@@ -333,7 +340,9 @@ const toolHandlers = {
       // Read single element
       const element = await this.page.$(selector);
       if (!element) {
-        throw new Error(`Element not found: ${selector}. The element might be below the current view. Try using the 'scroll' tool to scroll down and find the element.`);
+        throw new Error(
+          `Element not found: ${selector}. The element might be below the current view. Try using the 'scroll' tool to scroll down and find the element.`
+        );
       }
       text = await element.evaluate((el) => el.innerText || el.textContent);
     }
@@ -348,7 +357,7 @@ const toolHandlers = {
     };
   },
 
-  get_elements: async function(args) {
+  get_elements: async function (args) {
     const {
       selector,
       attributes = ["id", "class", "href", "src", "alt", "title"],
@@ -393,9 +402,13 @@ const toolHandlers = {
     };
   },
 
-
-  wait_for: async function(args) {
-    const { selector, state = "visible", timeout = 10000, switchToNewTab = true } = args;
+  wait_for: async function (args) {
+    const {
+      selector,
+      state = "visible",
+      timeout = 10000,
+      switchToNewTab = true,
+    } = args;
 
     if (!this.page) {
       throw new Error(
@@ -409,19 +422,25 @@ const toolHandlers = {
     if (switchToNewTab && this.browser) {
       const context = this.browser.contexts()[0];
       const currentPages = context.pages();
-      
+
       // If we have more pages than before, switch to the latest one
       if (currentPages.length > 1) {
         const latestPage = currentPages[currentPages.length - 1];
         if (latestPage !== this.page) {
-          console.error(`[MCP] Found new tab, switching to latest tab (${latestPage.url()})`);
+          console.error(
+            `[MCP] Found new tab, switching to latest tab (${latestPage.url()})`
+          );
           this.page = latestPage;
-          
+
           // Wait a bit for the new page to load
           try {
-            await this.page.waitForLoadState('domcontentloaded', { timeout: 5000 });
+            await this.page.waitForLoadState("domcontentloaded", {
+              timeout: 5000,
+            });
           } catch (e) {
-            console.error("[MCP] New page didn't finish loading within 5s, continuing anyway");
+            console.error(
+              "[MCP] New page didn't finish loading within 5s, continuing anyway"
+            );
           }
         }
       }
@@ -440,20 +459,25 @@ const toolHandlers = {
       };
     } catch (error) {
       // If waiting failed and we haven't tried switching tabs yet, try it now
-      if (switchToNewTab && this.browser && error.message.includes('Timeout')) {
+      if (switchToNewTab && this.browser && error.message.includes("Timeout")) {
         console.error("[MCP] Timeout occurred, checking for new tabs...");
         const context = this.browser.contexts()[0];
         const currentPages = context.pages();
-        
+
         if (currentPages.length > 1) {
           const latestPage = currentPages[currentPages.length - 1];
           if (latestPage !== this.page) {
-            console.error(`[MCP] Switching to latest tab after timeout (${latestPage.url()})`);
+            console.error(
+              `[MCP] Switching to latest tab after timeout (${latestPage.url()})`
+            );
             this.page = latestPage;
-            
+
             // Try waiting again on the new page
-            await this.page.waitForSelector(selector, { state, timeout: Math.min(timeout, 5000) });
-            
+            await this.page.waitForSelector(selector, {
+              state,
+              timeout: Math.min(timeout, 5000),
+            });
+
             return {
               content: [
                 {
@@ -465,17 +489,22 @@ const toolHandlers = {
           }
         }
       }
-      
+
       // Enhanced error message with scrolling suggestion
-      if (error.message.includes('Timeout') || error.message.includes('exceed')) {
-        throw new Error(`${error.message} The element '${selector}' was not found within ${timeout}ms. The element might be below the current viewport. Try using the 'scroll' tool to scroll down and bring the element into view, then retry the wait_for operation.`);
+      if (
+        error.message.includes("Timeout") ||
+        error.message.includes("exceed")
+      ) {
+        throw new Error(
+          `${error.message} The element '${selector}' was not found within ${timeout}ms. The element might be below the current viewport. Try using the 'scroll' tool to scroll down and bring the element into view, then retry the wait_for operation.`
+        );
       }
-      
+
       throw error;
     }
   },
 
-  press_key: async function(args) {
+  press_key: async function (args) {
     const { key, modifiers = [] } = args;
 
     if (!this.page) {
@@ -511,7 +540,7 @@ const toolHandlers = {
     };
   },
 
-  screenshot: async function(args = {}) {
+  screenshot: async function (args = {}) {
     const { fullPage = false, selector } = args;
 
     if (!this.page) {
@@ -529,7 +558,9 @@ const toolHandlers = {
     if (selector) {
       const element = await this.page.$(selector);
       if (!element) {
-        throw new Error(`Element not found for screenshot: ${selector}. The element might be below the current view. Try using the 'scroll' tool to scroll down and bring the element into view before taking a screenshot.`);
+        throw new Error(
+          `Element not found for screenshot: ${selector}. The element might be below the current view. Try using the 'scroll' tool to scroll down and bring the element into view before taking a screenshot.`
+        );
       }
       await element.screenshot({ path: filepath });
     } else {
@@ -546,7 +577,7 @@ const toolHandlers = {
     };
   },
 
-  scroll: async function(args = {}) {
+  scroll: async function (args = {}) {
     const { direction = "down", amount = 500 } = args;
 
     if (!this.page) {
@@ -579,7 +610,7 @@ const toolHandlers = {
     };
   },
 
-  get_page_info: async function() {
+  get_page_info: async function () {
     if (!this.page) {
       throw new Error(
         "No browser page available. Launch or connect to browser first."
@@ -609,7 +640,7 @@ const toolHandlers = {
     };
   },
 
-  run_script: async function(args) {
+  run_script: async function (args) {
     const { scriptPath, args: scriptArgs = {} } = args;
 
     if (!this.browser || !this.page) {
@@ -650,8 +681,7 @@ const toolHandlers = {
     }
   },
 
-
-  go_back: async function() {
+  go_back: async function () {
     if (!this.page) {
       throw new Error(
         "No browser page available. Launch or connect to browser first."
@@ -663,7 +693,7 @@ const toolHandlers = {
     try {
       await this.page.goBack();
       const currentUrl = this.page.url();
-      
+
       return {
         content: [
           {
@@ -673,13 +703,13 @@ const toolHandlers = {
         ],
       };
     } catch (error) {
-      throw new Error(`Failed to go back: ${error.message}. There might be no previous page in history.`);
+      throw new Error(
+        `Failed to go back: ${error.message}. There might be no previous page in history.`
+      );
     }
   },
 
-
-
-  evaluate: async function(args) {
+  evaluate: async function (args) {
     const { code } = args;
 
     if (!this.page) {
@@ -732,7 +762,7 @@ const toolHandlers = {
     }
   },
 
-  execute_code: async function(args) {
+  execute_code: async function (args) {
     const { code } = args;
 
     if (!this.browser || !this.page) {
@@ -768,7 +798,7 @@ const toolHandlers = {
     }
   },
 
-  switch_to_latest_tab: async function() {
+  switch_to_latest_tab: async function () {
     if (!this.browser) {
       throw new Error(
         "No browser available. Launch or connect to browser first."
@@ -779,20 +809,22 @@ const toolHandlers = {
 
     const context = this.browser.contexts()[0];
     const currentPages = context.pages();
-    
+
     if (currentPages.length === 0) {
       throw new Error("No pages available");
     }
-    
+
     const latestPage = currentPages[currentPages.length - 1];
     const previousUrl = this.page ? this.page.url() : "none";
     this.page = latestPage;
-    
+
     // Wait for the new page to load
     try {
-      await this.page.waitForLoadState('domcontentloaded', { timeout: 5000 });
+      await this.page.waitForLoadState("domcontentloaded", { timeout: 5000 });
     } catch (e) {
-      console.error("[MCP] New page didn't finish loading within 5s, continuing anyway");
+      console.error(
+        "[MCP] New page didn't finish loading within 5s, continuing anyway"
+      );
     }
 
     return {
@@ -805,7 +837,7 @@ const toolHandlers = {
     };
   },
 
-  switch_to_tab: async function(args) {
+  switch_to_tab: async function (args) {
     const { index = 0, url } = args;
 
     if (!this.browser) {
@@ -818,35 +850,39 @@ const toolHandlers = {
 
     const context = this.browser.contexts()[0];
     const currentPages = context.pages();
-    
+
     if (currentPages.length === 0) {
       throw new Error("No pages available");
     }
 
     let targetPage;
-    
+
     if (url) {
       // Find page by URL
-      targetPage = currentPages.find(page => page.url().includes(url));
+      targetPage = currentPages.find((page) => page.url().includes(url));
       if (!targetPage) {
         throw new Error(`No tab found containing URL: ${url}`);
       }
     } else {
       // Find page by index
       if (index >= currentPages.length) {
-        throw new Error(`Tab index ${index} out of range. Available tabs: ${currentPages.length}`);
+        throw new Error(
+          `Tab index ${index} out of range. Available tabs: ${currentPages.length}`
+        );
       }
       targetPage = currentPages[index];
     }
-    
+
     const previousUrl = this.page ? this.page.url() : "none";
     this.page = targetPage;
-    
+
     // Wait for the page to be ready
     try {
-      await this.page.waitForLoadState('domcontentloaded', { timeout: 5000 });
+      await this.page.waitForLoadState("domcontentloaded", { timeout: 5000 });
     } catch (e) {
-      console.error("[MCP] Page didn't finish loading within 5s, continuing anyway");
+      console.error(
+        "[MCP] Page didn't finish loading within 5s, continuing anyway"
+      );
     }
 
     return {
@@ -859,7 +895,7 @@ const toolHandlers = {
     };
   },
 
-  get_tabs: async function() {
+  get_tabs: async function () {
     if (!this.browser) {
       throw new Error(
         "No browser available. Launch or connect to browser first."
@@ -870,12 +906,12 @@ const toolHandlers = {
 
     const context = this.browser.contexts()[0];
     const currentPages = context.pages();
-    
+
     const tabInfo = currentPages.map((page, index) => ({
       index,
       url: page.url(),
       title: page.title(),
-      isCurrent: page === this.page
+      isCurrent: page === this.page,
     }));
 
     return {
@@ -888,7 +924,7 @@ const toolHandlers = {
     };
   },
 
-  close_browser: async function() {
+  close_browser: async function () {
     console.error("[MCP] Closing browser");
 
     if (this.browser) {

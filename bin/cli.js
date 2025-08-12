@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { ChromeAutomationServer } = require('../src/ChromeAutomationServer');
+const { ChromeAutomationServer } = require("../src/ChromeAutomationServer");
 
 async function main() {
   const server = new ChromeAutomationServer();

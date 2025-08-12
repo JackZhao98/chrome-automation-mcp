@@ -1,5 +1,5 @@
-const { toolDefinitions } = require('./tools');
-const { toolHandlers } = require('./handlers');
+const { toolDefinitions } = require("./tools");
+const { toolHandlers } = require("./handlers");
 
 class ChromeAutomationServer {
   constructor() {
@@ -8,7 +8,7 @@ class ChromeAutomationServer {
     this.StdioServerTransport = null;
     this.CallToolRequestSchema = null;
     this.ListToolsRequestSchema = null;
-    
+
     this.browser = null;
     this.page = null;
     this.debugPort = 9222;
@@ -20,12 +20,12 @@ class ChromeAutomationServer {
     const sdkServer = await import("@modelcontextprotocol/sdk/server/index.js");
     const sdkStdio = await import("@modelcontextprotocol/sdk/server/stdio.js");
     const sdkTypes = await import("@modelcontextprotocol/sdk/types.js");
-    
+
     this.Server = sdkServer.Server;
     this.StdioServerTransport = sdkStdio.StdioServerTransport;
     this.CallToolRequestSchema = sdkTypes.CallToolRequestSchema;
     this.ListToolsRequestSchema = sdkTypes.ListToolsRequestSchema;
-    
+
     this.server = new this.Server(
       {
         name: "browser-mcp",
@@ -73,28 +73,31 @@ class ChromeAutomationServer {
       tools: toolDefinitions,
     }));
 
-    this.server.setRequestHandler(this.CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
+    this.server.setRequestHandler(
+      this.CallToolRequestSchema,
+      async (request) => {
+        const { name, arguments: args } = request.params;
 
-      try {
-        const handler = toolHandlers[name];
-        if (!handler) {
-          throw new Error(`Unknown tool: ${name}`);
+        try {
+          const handler = toolHandlers[name];
+          if (!handler) {
+            throw new Error(`Unknown tool: ${name}`);
+          }
+
+          return await handler.call(this, args || {});
+        } catch (error) {
+          console.error(`[MCP] Error in ${name}:`, error);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error: ${error.message}`,
+              },
+            ],
+          };
         }
-
-        return await handler.call(this, args || {});
-      } catch (error) {
-        console.error(`[MCP] Error in ${name}:`, error);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error: ${error.message}`,
-            },
-          ],
-        };
       }
-    });
+    );
   }
 
   async run() {
