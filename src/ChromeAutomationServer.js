@@ -1,5 +1,8 @@
 const { toolDefinitions } = require("./tools");
 const { toolHandlers } = require("./handlers");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
 
 class ChromeAutomationServer {
   constructor() {
@@ -13,6 +16,72 @@ class ChromeAutomationServer {
     this.page = null;
     this.debugPort = 9222;
     this.chromeProcess = null;
+    
+    // Session管理
+    this.sessionId = this.generateSessionId();
+    this.sessionDir = path.join(os.tmpdir(), `chrome-debug-mcp-${this.sessionId}`);
+    this.sessionRegistryFile = path.join(os.tmpdir(), "mcp-browser-sessions.json");
+    
+    console.error(`[MCP] Session ID: ${this.sessionId}`);
+  }
+
+  generateSessionId() {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    return `${timestamp}-${random}`;
+  }
+
+  getAvailablePort(basePort = 9222) {
+    // 基于session ID生成端口号，避免冲突
+    const sessionHash = this.sessionId.split('-')[1];
+    const offset = parseInt(sessionHash.substring(0, 2), 36) % 100;
+    return basePort + offset;
+  }
+
+  registerSession() {
+    try {
+      let sessions = {};
+      if (fs.existsSync(this.sessionRegistryFile)) {
+        sessions = JSON.parse(fs.readFileSync(this.sessionRegistryFile, 'utf8'));
+      }
+      
+      sessions[this.sessionId] = {
+        pid: process.pid,
+        debugPort: this.debugPort,
+        sessionDir: this.sessionDir,
+        createdAt: new Date().toISOString(),
+        chromeProcessPid: this.chromeProcess ? this.chromeProcess.pid : null
+      };
+      
+      fs.writeFileSync(this.sessionRegistryFile, JSON.stringify(sessions, null, 2));
+      console.error(`[MCP] Session registered: ${this.sessionId}`);
+    } catch (error) {
+      console.error("[MCP] Failed to register session:", error);
+    }
+  }
+
+  unregisterSession() {
+    try {
+      if (fs.existsSync(this.sessionRegistryFile)) {
+        const sessions = JSON.parse(fs.readFileSync(this.sessionRegistryFile, 'utf8'));
+        delete sessions[this.sessionId];
+        fs.writeFileSync(this.sessionRegistryFile, JSON.stringify(sessions, null, 2));
+        console.error(`[MCP] Session unregistered: ${this.sessionId}`);
+      }
+    } catch (error) {
+      console.error("[MCP] Failed to unregister session:", error);
+    }
+  }
+
+  cleanupSessionDir() {
+    try {
+      if (fs.existsSync(this.sessionDir)) {
+        fs.rmSync(this.sessionDir, { recursive: true, force: true });
+        console.error(`[MCP] Session directory cleaned: ${this.sessionDir}`);
+      }
+    } catch (error) {
+      console.error("[MCP] Failed to cleanup session directory:", error);
+    }
   }
 
   async initialize() {
@@ -47,23 +116,41 @@ class ChromeAutomationServer {
   }
 
   async cleanup() {
-    console.error("[MCP] Cleaning up...");
+    console.error(`[MCP] Cleaning up session ${this.sessionId}...`);
 
+    // 优雅关闭浏览器
     if (this.browser) {
       try {
         await this.browser.close();
+        console.error("[MCP] Browser closed gracefully");
       } catch (e) {
         console.error("[MCP] Error closing browser:", e);
       }
     }
 
-    if (this.chromeProcess) {
+    // 如果浏览器关闭失败，再kill进程
+    if (this.chromeProcess && !this.chromeProcess.killed) {
       try {
-        this.chromeProcess.kill();
+        // 先尝试优雅终止
+        this.chromeProcess.kill('SIGTERM');
+        
+        // 等待2秒，如果还没退出则强制kill
+        setTimeout(() => {
+          if (!this.chromeProcess.killed) {
+            this.chromeProcess.kill('SIGKILL');
+            console.error("[MCP] Chrome process force killed");
+          }
+        }, 2000);
+        
+        console.error("[MCP] Chrome process terminated");
       } catch (e) {
         console.error("[MCP] Error killing Chrome process:", e);
       }
     }
+
+    // 清理session记录和目录
+    this.unregisterSession();
+    this.cleanupSessionDir();
 
     process.exit(0);
   }

@@ -3,7 +3,7 @@ const timestamp = Date.now();
 const toolDefinitions = [
   {
     name: "launch_browser",
-    description: "Launch Chrome browser with debugging port",
+    description: "Launch Chrome browser with session management. Each instance gets a unique session ID, port, and user data directory for isolation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -14,13 +14,11 @@ const toolDefinitions = [
         },
         userDataDir: {
           type: "string",
-          description: "Chrome user data directory path",
-          default: `/tmp/chrome-debug-mcp-${timestamp}`,
+          description: "Chrome user data directory path (auto-generated per session if not provided)",
         },
         debugPort: {
           type: "number",
-          description: "Remote debugging port",
-          default: 9222,
+          description: "Remote debugging port (auto-assigned per session if not provided)",
         },
       },
     },
@@ -367,8 +365,16 @@ const toolDefinitions = [
     },
   },
   {
+    name: "list_sessions",
+    description: "List all active browser automation sessions",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
     name: "close_browser",
-    description: "Close the browser connection",
+    description: "Gracefully close the browser connection and clean up session data",
     inputSchema: {
       type: "object",
       properties: {},

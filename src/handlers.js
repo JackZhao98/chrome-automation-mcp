@@ -11,31 +11,55 @@ const toolHandlers = {
   launch_browser: async function (args) {
     const {
       headless = false,
-      userDataDir = "/tmp/chrome-debug-mcp",
-      debugPort = 9222,
-    } = args;
-
-    console.error("[MCP] Launching browser with args:", {
-      headless,
       userDataDir,
       debugPort,
+    } = args;
+
+    // 使用session特定的配置
+    const actualUserDataDir = userDataDir || this.sessionDir;
+    const actualDebugPort = debugPort || this.getAvailablePort();
+    
+    console.error(`[MCP] Launching browser for session ${this.sessionId} with args:`, {
+      headless,
+      userDataDir: actualUserDataDir,
+      debugPort: actualDebugPort,
+      sessionId: this.sessionId,
     });
 
-    // Kill any existing Chrome process
+    // 只清理可能冲突的同端口进程，而不是所有Chrome进程
     const platform = os.platform();
-    if (platform === "darwin") {
-      try {
-        await execAsync('killall "Google Chrome"');
-        console.error("[MCP] Killed existing Chrome process");
-      } catch (e) {
-        // Chrome might not be running
-      }
-    } else if (platform === "win32") {
-      try {
-        await execAsync("taskkill /F /IM chrome.exe");
-      } catch (e) {
-        // Chrome might not be running
-      }
+    
+    // 检查端口是否被占用
+    try {
+      const { exec } = require("child_process");
+      const checkCmd = platform === "darwin" 
+        ? `lsof -ti:${actualDebugPort}`
+        : platform === "win32"
+        ? `netstat -ano | findstr :${actualDebugPort}`
+        : `lsof -ti:${actualDebugPort}`;
+        
+      await new Promise((resolve, reject) => {
+        exec(checkCmd, (error, stdout) => {
+          if (stdout && stdout.trim()) {
+            const pids = stdout.trim().split('\n').filter(pid => pid.trim());
+            console.error(`[MCP] Port ${actualDebugPort} is occupied by processes: ${pids.join(', ')}`);
+            
+            // 只kill占用该端口的进程
+            pids.forEach(pid => {
+              try {
+                process.kill(parseInt(pid.trim()), 'SIGTERM');
+                console.error(`[MCP] Terminated process ${pid} on port ${actualDebugPort}`);
+              } catch (e) {
+                console.error(`[MCP] Failed to terminate process ${pid}:`, e.message);
+              }
+            });
+          }
+          resolve();
+        });
+      });
+    } catch (e) {
+      // Port check failed, continue anyway
+      console.error("[MCP] Port check failed:", e.message);
     }
 
     // Launch Chrome with debugging port
@@ -47,10 +71,12 @@ const toolHandlers = {
         : "google-chrome";
 
     const chromeArgs = [
-      `--remote-debugging-port=${debugPort}`,
-      `--user-data-dir=${userDataDir}`,
+      `--remote-debugging-port=${actualDebugPort}`,
+      `--user-data-dir=${actualUserDataDir}`,
       "--no-first-run",
       "--no-default-browser-check",
+      `--disable-features=TranslateUI`,
+      `--disable-ipc-flooding-protection`,
     ];
 
     if (headless) {
@@ -58,7 +84,7 @@ const toolHandlers = {
     }
 
     console.error(
-      "[MCP] Starting Chrome with command:",
+      `[MCP] Starting Chrome for session ${this.sessionId}:`,
       chromePath,
       chromeArgs
     );
@@ -68,7 +94,10 @@ const toolHandlers = {
       stdio: "ignore",
     });
 
-    this.debugPort = debugPort;
+    this.debugPort = actualDebugPort;
+    
+    // 注册session
+    this.registerSession();
 
     // Wait for Chrome to start
     await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -76,19 +105,19 @@ const toolHandlers = {
     // Connect with Playwright
     try {
       this.browser = await chromium.connectOverCDP(
-        `http://127.0.0.1:${debugPort}`
+        `http://127.0.0.1:${actualDebugPort}`
       );
       const context = this.browser.contexts()[0];
       const pages = context.pages();
       this.page = pages.length > 0 ? pages[0] : await context.newPage();
 
-      console.error("[MCP] Browser launched and connected successfully");
+      console.error(`[MCP] Browser launched and connected successfully for session ${this.sessionId}`);
 
       return {
         content: [
           {
             type: "text",
-            text: `Browser launched successfully on port ${debugPort}`,
+            text: `Browser launched successfully for session ${this.sessionId} on port ${actualDebugPort}`,
           },
         ],
       };
@@ -924,25 +953,144 @@ const toolHandlers = {
     };
   },
 
+  list_sessions: async function () {
+    console.error("[MCP] Listing all active sessions");
+
+    const sessionRegistryFile = path.join(os.tmpdir(), "mcp-browser-sessions.json");
+    
+    try {
+      if (!fs.existsSync(sessionRegistryFile)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No active sessions found",
+            },
+          ],
+        };
+      }
+
+      const sessions = JSON.parse(fs.readFileSync(sessionRegistryFile, 'utf8'));
+      const activeSessions = [];
+
+      // 检查每个session是否还活跃
+      for (const [sessionId, sessionInfo] of Object.entries(sessions)) {
+        let isActive = false;
+        
+        // 检查进程是否还在运行
+        try {
+          process.kill(sessionInfo.pid, 0); // 这不会真的kill，只是检查进程是否存在
+          isActive = true;
+        } catch (e) {
+          // 进程不存在
+          isActive = false;
+        }
+
+        if (isActive) {
+          activeSessions.push({
+            sessionId,
+            pid: sessionInfo.pid,
+            debugPort: sessionInfo.debugPort,
+            sessionDir: sessionInfo.sessionDir,
+            createdAt: sessionInfo.createdAt,
+            chromeProcessPid: sessionInfo.chromeProcessPid,
+            isCurrentSession: sessionId === this.sessionId
+          });
+        }
+      }
+
+      // 清理已失效的session记录
+      const cleanedSessions = {};
+      activeSessions.forEach(session => {
+        cleanedSessions[session.sessionId] = sessions[session.sessionId];
+      });
+      
+      if (Object.keys(cleanedSessions).length !== Object.keys(sessions).length) {
+        fs.writeFileSync(sessionRegistryFile, JSON.stringify(cleanedSessions, null, 2));
+        console.error(`[MCP] Cleaned up ${Object.keys(sessions).length - Object.keys(cleanedSessions).length} inactive sessions`);
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: activeSessions.length > 0 
+              ? JSON.stringify(activeSessions, null, 2)
+              : "No active sessions found",
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("[MCP] Error listing sessions:", error);
+      throw new Error(`Failed to list sessions: ${error.message}`);
+    }
+  },
+
   close_browser: async function () {
-    console.error("[MCP] Closing browser");
+    console.error(`[MCP] Closing browser for session ${this.sessionId}`);
 
+    let browserClosed = false;
+    let processClosed = false;
+
+    // 优雅关闭浏览器
     if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-      this.page = null;
+      try {
+        await this.browser.close();
+        browserClosed = true;
+        console.error("[MCP] Browser closed gracefully");
+        this.browser = null;
+        this.page = null;
+      } catch (e) {
+        console.error("[MCP] Error closing browser gracefully:", e);
+      }
     }
 
-    if (this.chromeProcess) {
-      this.chromeProcess.kill();
-      this.chromeProcess = null;
+    // 优雅终止Chrome进程
+    if (this.chromeProcess && !this.chromeProcess.killed) {
+      try {
+        // 先尝试SIGTERM优雅终止
+        this.chromeProcess.kill('SIGTERM');
+        console.error("[MCP] Sent SIGTERM to Chrome process");
+        
+        // 等待进程优雅退出
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            if (!this.chromeProcess.killed) {
+              console.error("[MCP] Chrome process didn't exit gracefully, force killing...");
+              this.chromeProcess.kill('SIGKILL');
+            }
+            resolve();
+          }, 3000);
+          
+          this.chromeProcess.on('exit', () => {
+            clearTimeout(timeout);
+            processClosed = true;
+            console.error("[MCP] Chrome process exited gracefully");
+            resolve();
+          });
+        });
+        
+        this.chromeProcess = null;
+      } catch (e) {
+        console.error("[MCP] Error terminating Chrome process:", e);
+      }
     }
+
+    // 清理session记录和目录
+    this.unregisterSession();
+    this.cleanupSessionDir();
+
+    const status = browserClosed && processClosed 
+      ? "Browser and process closed gracefully" 
+      : browserClosed 
+      ? "Browser closed gracefully, process terminated" 
+      : "Browser force closed";
 
     return {
       content: [
         {
           type: "text",
-          text: "Browser closed successfully",
+          text: `${status} for session ${this.sessionId}`,
         },
       ],
     };
