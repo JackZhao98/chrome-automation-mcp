@@ -20,6 +20,15 @@ const toolDefinitions = [
           type: "number",
           description: "Remote debugging port (auto-assigned per session if not provided)",
         },
+        copyProfile: {
+          type: "boolean",
+          description: "Copy cookies, login data, and other user data from default Chrome profile to maintain login sessions",
+          default: false,
+        },
+        sourceProfilePath: {
+          type: "string",
+          description: "Custom source profile path to copy from (uses default Chrome profile if not provided)",
+        },
       },
     },
   },
@@ -362,6 +371,24 @@ const toolDefinitions = [
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "copy_user_profile", 
+    description: "Copy cookies, login data, and browsing data from default Chrome profile to current session. Can handle running browsers with restart option.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sourceProfilePath: {
+          type: "string",
+          description: "Custom source profile path to copy from (uses default Chrome profile if not provided)",
+        },
+        restartBrowser: {
+          type: "boolean",
+          description: "Restart the browser to ensure complete profile copy (recommended if browser is running)",
+          default: false,
+        },
+      },
     },
   },
   {

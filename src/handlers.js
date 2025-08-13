@@ -13,6 +13,8 @@ const toolHandlers = {
       headless = false,
       userDataDir,
       debugPort,
+      copyProfile = false,
+      sourceProfilePath,
     } = args;
 
     // 使用session特定的配置
@@ -24,7 +26,24 @@ const toolHandlers = {
       userDataDir: actualUserDataDir,
       debugPort: actualDebugPort,
       sessionId: this.sessionId,
+      copyProfile,
     });
+
+    // 如果需要复制用户profile
+    if (copyProfile) {
+      try {
+        console.error(`[MCP] Copying user profile for session ${this.sessionId}...`);
+        const copyResult = await this.copyUserProfile(sourceProfilePath);
+        console.error(`[MCP] Profile copy completed for session ${this.sessionId}:`, {
+          copiedItems: copyResult.copiedItems.length,
+          skippedItems: copyResult.skippedItems.length,
+          sourceProfile: copyResult.sourceProfile
+        });
+      } catch (error) {
+        console.error(`[MCP] Profile copy failed for session ${this.sessionId}:`, error);
+        throw new Error(`Failed to copy user profile: ${error.message}`);
+      }
+    }
 
     // 只清理可能冲突的同端口进程，而不是所有Chrome进程
     const platform = os.platform();
@@ -113,11 +132,15 @@ const toolHandlers = {
 
       console.error(`[MCP] Browser launched and connected successfully for session ${this.sessionId}`);
 
+      const launchMessage = copyProfile 
+        ? `Browser launched successfully for session ${this.sessionId} on port ${actualDebugPort} with user profile copied`
+        : `Browser launched successfully for session ${this.sessionId} on port ${actualDebugPort}`;
+
       return {
         content: [
           {
             type: "text",
-            text: `Browser launched successfully for session ${this.sessionId} on port ${actualDebugPort}`,
+            text: launchMessage,
           },
         ],
       };
@@ -951,6 +974,141 @@ const toolHandlers = {
         },
       ],
     };
+  },
+
+  copy_user_profile: async function (args = {}) {
+    const { sourceProfilePath, restartBrowser = false } = args;
+
+    console.error(`[MCP] Starting profile copy for session ${this.sessionId}`);
+
+    // 检查浏览器是否正在运行
+    const browserWasRunning = this.browser !== null;
+    let reconnectInfo = null;
+
+    if (browserWasRunning) {
+      console.error(`[MCP] Browser is running, will need to restart for complete profile copy`);
+      
+      // 保存当前状态
+      reconnectInfo = {
+        debugPort: this.debugPort,
+        currentUrl: this.page ? await this.page.url().catch(() => 'about:blank') : 'about:blank'
+      };
+
+      if (restartBrowser) {
+        console.error(`[MCP] Closing browser for profile copy...`);
+        // 优雅关闭浏览器但不清理session
+        if (this.browser) {
+          try {
+            await this.browser.close();
+          } catch (e) {
+            console.error("[MCP] Error closing browser:", e);
+          }
+        }
+        
+        if (this.chromeProcess && !this.chromeProcess.killed) {
+          try {
+            this.chromeProcess.kill('SIGTERM');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            if (!this.chromeProcess.killed) {
+              this.chromeProcess.kill('SIGKILL');
+            }
+          } catch (e) {
+            console.error("[MCP] Error killing Chrome process:", e);
+          }
+        }
+        
+        this.browser = null;
+        this.page = null;
+        this.chromeProcess = null;
+      } else {
+        console.error(`[MCP] Browser is running - some files may be locked. Use restartBrowser:true for complete copy`);
+      }
+    }
+
+    try {
+      const copyResult = await this.copyUserProfile(sourceProfilePath);
+      
+      // 如果需要重启浏览器
+      if (browserWasRunning && restartBrowser && reconnectInfo) {
+        console.error(`[MCP] Restarting browser after profile copy...`);
+        
+        // 重新启动浏览器
+        const { chromium } = require("playwright");
+        const { spawn } = require("child_process");
+        const platform = os.platform();
+        
+        const chromePath =
+          platform === "darwin"
+            ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            : platform === "win32"
+            ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+            : "google-chrome";
+
+        const chromeArgs = [
+          `--remote-debugging-port=${reconnectInfo.debugPort}`,
+          `--user-data-dir=${this.sessionDir}`,
+          "--no-first-run",
+          "--no-default-browser-check",
+        ];
+
+        this.chromeProcess = spawn(chromePath, chromeArgs, {
+          detached: false,
+          stdio: "ignore",
+        });
+
+        // 等待Chrome启动
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+
+        // 重新连接
+        try {
+          this.browser = await chromium.connectOverCDP(
+            `http://127.0.0.1:${reconnectInfo.debugPort}`
+          );
+          const context = this.browser.contexts()[0];
+          const pages = context.pages();
+          this.page = pages.length > 0 ? pages[0] : await context.newPage();
+          
+          // 恢复到之前的页面
+          if (reconnectInfo.currentUrl !== 'about:blank') {
+            await this.page.goto(reconnectInfo.currentUrl).catch(e => 
+              console.error(`[MCP] Failed to restore URL ${reconnectInfo.currentUrl}:`, e)
+            );
+          }
+          
+          console.error(`[MCP] Browser restarted and reconnected successfully`);
+        } catch (error) {
+          console.error(`[MCP] Failed to reconnect after restart:`, error);
+        }
+      }
+      
+      const message = browserWasRunning && !restartBrowser
+        ? `Profile copied (some files may be incomplete due to browser lock). Use restartBrowser:true for complete copy.`
+        : `Profile copied successfully for session ${this.sessionId}`;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              message,
+              sourceProfile: copyResult.sourceProfile,
+              targetSession: copyResult.targetSession,
+              copiedItems: copyResult.copiedItems,
+              skippedItems: copyResult.skippedItems,
+              summary: {
+                copied: copyResult.copiedItems.length,
+                skipped: copyResult.skippedItems.length
+              },
+              browserRestarted: browserWasRunning && restartBrowser,
+              warning: browserWasRunning && !restartBrowser ? "Some files may be locked by running browser" : null
+            }, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      console.error(`[MCP] Profile copy failed for session ${this.sessionId}:`, error);
+      throw new Error(`Failed to copy user profile: ${error.message}`);
+    }
   },
 
   list_sessions: async function () {

@@ -84,6 +84,130 @@ class ChromeAutomationServer {
     }
   }
 
+  getDefaultChromeProfilePath() {
+    const platform = os.platform();
+    const homeDir = os.homedir();
+    
+    switch (platform) {
+      case "darwin": // macOS
+        return path.join(homeDir, "Library", "Application Support", "Google", "Chrome", "Default");
+      case "win32": // Windows
+        return path.join(homeDir, "AppData", "Local", "Google", "Chrome", "User Data", "Default");
+      case "linux": // Linux
+        return path.join(homeDir, ".config", "google-chrome", "Default");
+      default:
+        throw new Error(`Unsupported platform: ${platform}`);
+    }
+  }
+
+  async copyUserProfile(sourceProfilePath = null) {
+    const defaultProfilePath = sourceProfilePath || this.getDefaultChromeProfilePath();
+    
+    console.error(`[MCP] Copying user profile from ${defaultProfilePath} to ${this.sessionDir}`);
+    
+    if (!fs.existsSync(defaultProfilePath)) {
+      throw new Error(`Default Chrome profile not found at: ${defaultProfilePath}`);
+    }
+
+    // 确保session目录存在
+    if (!fs.existsSync(this.sessionDir)) {
+      fs.mkdirSync(this.sessionDir, { recursive: true });
+    }
+
+    // 需要复制的重要文件和目录，按重要性排序
+    const importantItems = [
+      'Cookies',           // Cookie数据 - 最重要
+      'Login Data',        // 保存的密码
+      'Web Data',          // 表单数据、搜索引擎等
+      'Preferences',       // 用户偏好设置
+      'Bookmarks',         // 书签
+      'Local Storage',     // 本地存储
+      'Session Storage',   // 会话存储
+      'IndexedDB',         // IndexedDB数据
+      'History',           // 浏览历史
+      'Favicons',          // 网站图标
+      'Extensions',        // 扩展程序
+      'Extension Cookies', // 扩展程序Cookie
+      'Local State',       // 一些本地状态
+    ];
+
+    let copiedItems = [];
+    let skippedItems = [];
+    let lockedItems = [];
+
+    for (const item of importantItems) {
+      const sourcePath = path.join(defaultProfilePath, item);
+      const destPath = path.join(this.sessionDir, item);
+      
+      try {
+        if (fs.existsSync(sourcePath)) {
+          const stats = fs.statSync(sourcePath);
+          
+          if (stats.isDirectory()) {
+            // 复制目录
+            await this.copyDirectory(sourcePath, destPath);
+            copiedItems.push(`${item}/ (directory)`);
+          } else {
+            // 对于可能被锁定的文件，尝试创建副本
+            try {
+              fs.copyFileSync(sourcePath, destPath);
+              copiedItems.push(item);
+            } catch (copyError) {
+              if (copyError.code === 'EBUSY' || copyError.code === 'EACCES') {
+                // 文件被锁定，尝试读取并写入
+                try {
+                  const data = fs.readFileSync(sourcePath);
+                  fs.writeFileSync(destPath, data);
+                  copiedItems.push(`${item} (read-copy)`);
+                } catch (readError) {
+                  lockedItems.push(`${item} (locked: ${copyError.message})`);
+                  console.error(`[MCP] File locked, skipping ${item}:`, copyError.message);
+                }
+              } else {
+                throw copyError;
+              }
+            }
+          }
+        } else {
+          skippedItems.push(item);
+        }
+      } catch (error) {
+        console.error(`[MCP] Failed to copy ${item}:`, error.message);
+        skippedItems.push(`${item} (error: ${error.message})`);
+      }
+    }
+
+    console.error(`[MCP] Profile copy completed. Copied: ${copiedItems.length}, Skipped: ${skippedItems.length}, Locked: ${lockedItems.length}`);
+    
+    return {
+      copiedItems,
+      skippedItems,
+      lockedItems,
+      sourceProfile: defaultProfilePath,
+      targetSession: this.sessionDir
+    };
+  }
+
+  async copyDirectory(source, destination) {
+    if (!fs.existsSync(destination)) {
+      fs.mkdirSync(destination, { recursive: true });
+    }
+
+    const items = fs.readdirSync(source);
+    
+    for (const item of items) {
+      const sourcePath = path.join(source, item);
+      const destPath = path.join(destination, item);
+      const stats = fs.statSync(sourcePath);
+      
+      if (stats.isDirectory()) {
+        await this.copyDirectory(sourcePath, destPath);
+      } else {
+        fs.copyFileSync(sourcePath, destPath);
+      }
+    }
+  }
+
   async initialize() {
     // Dynamic imports for ESM modules
     const sdkServer = await import("@modelcontextprotocol/sdk/server/index.js");
