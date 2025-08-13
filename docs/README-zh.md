@@ -1,126 +1,132 @@
-# MCP Browser Automation Server
+# Chrome Automation MCP
 
-一个通用的MCP服务器，用于通过Playwright控制Chrome浏览器并执行自定义脚本。
+一个使用 Playwright 控制 Chrome 浏览器的模型上下文协议（MCP）服务器。
+
+[![npm version](https://badge.fury.io/js/chrome-automation-mcp.svg)](https://badge.fury.io/js/chrome-automation-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 安装
 
 ```bash
-# 创建项目目录
-mkdir mcp-browser-automation
-cd mcp-browser-automation
-
-# 复制 package.json 和 index.js
-
-# 安装依赖
-npm install
+npm install -g chrome-automation-mcp@1.2.0
 ```
 
-## 配置Claude Desktop
+**系统要求：**
+- Node.js 18.0.0 或更高版本
+- Google Chrome 浏览器
 
-1. 找到Claude Desktop配置文件：
-   - Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+## MCP 配置
 
-2. 添加MCP服务器配置：
+### Claude Desktop 配置
+
+编辑 `~/Library/Application Support/Claude/claude_desktop_config.json`：
 
 ```json
 {
   "mcpServers": {
-    "browser-automation": {
-      "command": "node",
-      "args": ["/absolute/path/to/mcp-browser-automation/index.js"],
-      "env": {}
+    "chrome-automation": {
+      "command": "chrome-automation-mcp"
     }
   }
 }
 ```
 
-3. 重启Claude Desktop
+### Lite 模式（精简工具集）
 
-## 使用方法
+```json
+{
+  "mcpServers": {
+    "chrome-automation": {
+      "command": "chrome-automation-mcp-lite"
+    }
+  }
+}
+```
 
-### 在Claude中使用MCP工具：
+## 可用工具
+
+### 🚀 浏览器管理
+- `launch_browser` - 启动 Chrome 浏览器
+- `connect_browser` - 连接现有 Chrome 实例  
+- `close_browser` - 关闭浏览器
+
+### 📍 导航与交互
+- `navigate_to` - 导航到 URL
+- `click` - 点击元素
+- `type_text` - 输入文本
+- `scroll` - 滚动页面
+- `wait_for` - 等待元素出现
+
+### 📊 信息获取
+- `read_text` - 读取页面文本
+- `get_elements` - 获取元素信息
+- `screenshot` - 截图
+- `get_page_info` - 获取页面信息
+
+### 🖥️ 标签页管理
+- `switch_to_tab` - 切换标签页
+- `get_tabs` - 获取标签页列表
+
+### 💻 代码执行
+- `run_script` - 执行 JavaScript 文件
+- `evaluate` - 在浏览器中执行 JavaScript
+- `set_storage` - 设置浏览器存储（cookies, localStorage 等）
+
+### ⚙️ 会话管理
+- `list_sessions` - 列出活动会话
+- `press_key` - 按键操作
+- `go_back` - 返回上一页
+
+## 快速开始
 
 1. **启动浏览器**
-```
-使用 launch_browser 工具，参数：
-- headless: false（显示浏览器窗口）
-- userDataDir: "/tmp/chrome-debug-mcp"
-- debugPort: 9222
+```json
+{"tool": "launch_browser", "arguments": {"headless": false}}
 ```
 
-2. **连接到已有浏览器**
-```
-使用 connect_browser 工具，参数：
-- debugPort: 9222
-```
-
-3. **运行脚本文件**
-```
-使用 run_script 工具，参数：
-- scriptPath: "/path/to/your/script.js"
-- args: { question: "你的问题" }
+2. **导航到网站**
+```json
+{"tool": "navigate_to", "arguments": {"url": "https://google.com"}}
 ```
 
-4. **直接执行代码**
-```
-使用 execute_code 工具，参数：
-- code: "await page.goto('https://google.com'); return await page.title();"
-```
-
-5. **关闭浏览器**
-```
-使用 close_browser 工具
+3. **截图**
+```json
+{"tool": "screenshot", "arguments": {"fullPage": true}}
 ```
 
-## 脚本编写指南
+## 脚本开发
 
-脚本可以访问以下变量：
-- `browser` - Playwright browser实例
-- `page` - 当前页面
-- `args` - 传入的参数对象
-
-### 示例脚本
+创建自定义脚本文件：
 
 ```javascript
-// chatgpt-ask.js
-const question = args.question || '默认问题';
+// my-script.js
+const query = args.query || 'MCP';
 
-await page.goto('https://chat.openai.com/');
-await page.waitForTimeout(3000);
+await page.goto('https://google.com');
+await page.fill('input[name="q"]', query);
+await page.press('input[name="q"]', 'Enter');
+await page.waitForSelector('h3');
 
-const input = await page.$('#prompt-textarea');
-await input.type(question);
-await page.keyboard.press('Enter');
+const results = await page.$$eval('h3', els => 
+  els.map(el => el.textContent)
+);
 
-await page.waitForTimeout(5000);
-
-const response = await page.evaluate(() => {
-    const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
-    return messages.length > 0 ? messages[messages.length - 1].textContent : '无回复';
-});
-
-return { question, response };
+return { query, results };
 ```
 
-## 在AI工作流中使用
+使用脚本：
+```json
+{
+  "tool": "run_script", 
+  "arguments": {
+    "scriptPath": "./my-script.js",
+    "args": {"query": "browser automation"}
+  }
+}
+```
 
-1. 先调用 `launch_browser` 或 `connect_browser` 建立连接
-2. 使用 `run_script` 执行你的自动化脚本
-3. 脚本返回的结果会传回给AI进行处理
-4. 最后调用 `close_browser` 清理资源
+## 链接
 
-## 注意事项
-
-- 脚本在Node.js环境中执行，可以使用Playwright的所有API
-- 确保Chrome以调试模式启动才能连接
-- 脚本执行错误会返回错误信息
-- 建议在脚本中添加适当的等待和错误处理
-
-## 故障排除
-
-如果连接失败：
-1. 确保Chrome正确启动：`chrome --remote-debugging-port=9222`
-2. 检查端口：访问 `http://127.0.0.1:9222/json/version`
-3. 查看MCP服务器日志
-
+- [GitHub](https://github.com/JackZhao98/chrome-automation-mcp)
+- [npm](https://www.npmjs.com/package/chrome-automation-mcp)
+- [MCP 协议](https://modelcontextprotocol.io/)
