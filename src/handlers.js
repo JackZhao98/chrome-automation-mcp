@@ -13,8 +13,6 @@ const toolHandlers = {
       headless = false,
       userDataDir,
       debugPort,
-      copyProfile = false,
-      sourceProfilePath,
     } = args;
 
     // 使用session特定的配置
@@ -26,24 +24,7 @@ const toolHandlers = {
       userDataDir: actualUserDataDir,
       debugPort: actualDebugPort,
       sessionId: this.sessionId,
-      copyProfile,
     });
-
-    // 如果需要复制用户profile
-    if (copyProfile) {
-      try {
-        console.error(`[MCP] Copying user profile for session ${this.sessionId}...`);
-        const copyResult = await this.copyUserProfile(sourceProfilePath);
-        console.error(`[MCP] Profile copy completed for session ${this.sessionId}:`, {
-          copiedItems: copyResult.copiedItems.length,
-          skippedItems: copyResult.skippedItems.length,
-          sourceProfile: copyResult.sourceProfile
-        });
-      } catch (error) {
-        console.error(`[MCP] Profile copy failed for session ${this.sessionId}:`, error);
-        throw new Error(`Failed to copy user profile: ${error.message}`);
-      }
-    }
 
     // 只清理可能冲突的同端口进程，而不是所有Chrome进程
     const platform = os.platform();
@@ -132,9 +113,7 @@ const toolHandlers = {
 
       console.error(`[MCP] Browser launched and connected successfully for session ${this.sessionId}`);
 
-      const launchMessage = copyProfile 
-        ? `Browser launched successfully for session ${this.sessionId} on port ${actualDebugPort} with user profile copied`
-        : `Browser launched successfully for session ${this.sessionId} on port ${actualDebugPort}`;
+      const launchMessage = `Browser launched successfully for session ${this.sessionId} on port ${actualDebugPort}`;
 
       return {
         content: [
@@ -814,83 +793,10 @@ const toolHandlers = {
     }
   },
 
-  execute_code: async function (args) {
-    const { code } = args;
 
-    if (!this.browser || !this.page) {
-      throw new Error(
-        "Browser not connected. Use launch_browser or connect_browser first."
-      );
-    }
-
-    console.error("[MCP] Executing code");
-
-    try {
-      // Create an async function and execute it
-      const AsyncFunction = Object.getPrototypeOf(
-        async function () {}
-      ).constructor;
-      const fn = new AsyncFunction("browser", "page", code);
-      const result = await fn(this.browser, this.page);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              typeof result === "string"
-                ? result
-                : JSON.stringify(result, null, 2),
-          },
-        ],
-      };
-    } catch (error) {
-      console.error("[MCP] Code execution failed:", error);
-      throw new Error(`Code execution failed: ${error.message}`);
-    }
-  },
-
-  switch_to_latest_tab: async function () {
-    if (!this.browser) {
-      throw new Error(
-        "No browser available. Launch or connect to browser first."
-      );
-    }
-
-    console.error("[MCP] Switching to latest tab");
-
-    const context = this.browser.contexts()[0];
-    const currentPages = context.pages();
-
-    if (currentPages.length === 0) {
-      throw new Error("No pages available");
-    }
-
-    const latestPage = currentPages[currentPages.length - 1];
-    const previousUrl = this.page ? this.page.url() : "none";
-    this.page = latestPage;
-
-    // Wait for the new page to load
-    try {
-      await this.page.waitForLoadState("domcontentloaded", { timeout: 5000 });
-    } catch (e) {
-      console.error(
-        "[MCP] New page didn't finish loading within 5s, continuing anyway"
-      );
-    }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Switched from ${previousUrl} to ${this.page.url()}`,
-        },
-      ],
-    };
-  },
 
   switch_to_tab: async function (args) {
-    const { index = 0, url } = args;
+    const { index = 0, url, target } = args;
 
     if (!this.browser) {
       throw new Error(
@@ -908,6 +814,16 @@ const toolHandlers = {
     }
 
     let targetPage;
+    let targetIndex = index;
+
+    // Handle special targets
+    if (target === "latest" || index === -1) {
+      targetIndex = currentPages.length - 1;
+      console.error("[MCP] Switching to latest tab");
+    } else if (target === "first") {
+      targetIndex = 0;
+      console.error("[MCP] Switching to first tab");
+    }
 
     if (url) {
       // Find page by URL
@@ -917,12 +833,12 @@ const toolHandlers = {
       }
     } else {
       // Find page by index
-      if (index >= currentPages.length) {
+      if (targetIndex >= currentPages.length || targetIndex < 0) {
         throw new Error(
-          `Tab index ${index} out of range. Available tabs: ${currentPages.length}`
+          `Tab index ${targetIndex} out of range. Available tabs: ${currentPages.length}`
         );
       }
-      targetPage = currentPages[index];
+      targetPage = currentPages[targetIndex];
     }
 
     const previousUrl = this.page ? this.page.url() : "none";
@@ -976,140 +892,135 @@ const toolHandlers = {
     };
   },
 
-  copy_user_profile: async function (args = {}) {
-    const { sourceProfilePath, restartBrowser = false } = args;
+  set_storage: async function (args = {}) {
+    const { cookies, cookieString, localStorage, sessionStorage, domain } = args;
 
-    console.error(`[MCP] Starting profile copy for session ${this.sessionId}`);
-
-    // 检查浏览器是否正在运行
-    const browserWasRunning = this.browser !== null;
-    let reconnectInfo = null;
-
-    if (browserWasRunning) {
-      console.error(`[MCP] Browser is running, will need to restart for complete profile copy`);
-      
-      // 保存当前状态
-      reconnectInfo = {
-        debugPort: this.debugPort,
-        currentUrl: this.page ? await this.page.url().catch(() => 'about:blank') : 'about:blank'
-      };
-
-      if (restartBrowser) {
-        console.error(`[MCP] Closing browser for profile copy...`);
-        // 优雅关闭浏览器但不清理session
-        if (this.browser) {
-          try {
-            await this.browser.close();
-          } catch (e) {
-            console.error("[MCP] Error closing browser:", e);
-          }
-        }
-        
-        if (this.chromeProcess && !this.chromeProcess.killed) {
-          try {
-            this.chromeProcess.kill('SIGTERM');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            if (!this.chromeProcess.killed) {
-              this.chromeProcess.kill('SIGKILL');
-            }
-          } catch (e) {
-            console.error("[MCP] Error killing Chrome process:", e);
-          }
-        }
-        
-        this.browser = null;
-        this.page = null;
-        this.chromeProcess = null;
-      } else {
-        console.error(`[MCP] Browser is running - some files may be locked. Use restartBrowser:true for complete copy`);
-      }
+    if (!this.browser) {
+      throw new Error(
+        "No browser available. Launch or connect to browser first."
+      );
     }
 
+    console.error(`[MCP] Setting authentication storage (cookies, localStorage, sessionStorage) for session ${this.sessionId}`);
+
     try {
-      const copyResult = await this.copyUserProfile(sourceProfilePath);
-      
-      // 如果需要重启浏览器
-      if (browserWasRunning && restartBrowser && reconnectInfo) {
-        console.error(`[MCP] Restarting browser after profile copy...`);
+      const context = this.browser.contexts()[0];
+      let cookiesToSet = [];
+      let results = {};
+
+      // 处理Cookie设置
+      if (cookieString) {
+        // 解析document.cookie格式的字符串
+        console.error(`[MCP] Parsing cookie string: ${cookieString.substring(0, 100)}...`);
         
-        // 重新启动浏览器
-        const { chromium } = require("playwright");
-        const { spawn } = require("child_process");
-        const platform = os.platform();
+        const parsedCookies = cookieString.split(';').map(cookiePair => {
+          const [name, value] = cookiePair.trim().split('=');
+          if (name && value) {
+            return {
+              name: name.trim(),
+              value: value.trim(),
+              domain: domain || 'localhost', // 默认域名
+              path: '/'
+            };
+          }
+          return null;
+        }).filter(Boolean);
         
-        const chromePath =
-          platform === "darwin"
-            ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-            : platform === "win32"
-            ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-            : "google-chrome";
+        cookiesToSet = parsedCookies;
+        console.error(`[MCP] Parsed ${parsedCookies.length} cookies from string`);
+      } else if (cookies && Array.isArray(cookies)) {
+        // 使用提供的cookie数组
+        cookiesToSet = cookies.map(cookie => ({
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain || domain || 'localhost',
+          path: cookie.path || '/',
+          httpOnly: cookie.httpOnly || false,
+          secure: cookie.secure || false,
+          sameSite: cookie.sameSite || 'Lax'
+        }));
+        console.error(`[MCP] Using provided ${cookiesToSet.length} cookies`);
+      }
 
-        const chromeArgs = [
-          `--remote-debugging-port=${reconnectInfo.debugPort}`,
-          `--user-data-dir=${this.sessionDir}`,
-          "--no-first-run",
-          "--no-default-browser-check",
-        ];
+      // 设置Cookie
+      if (cookiesToSet.length > 0) {
+        await context.addCookies(cookiesToSet);
+        console.error(`[MCP] Successfully set ${cookiesToSet.length} cookies`);
+        results.cookiesSet = cookiesToSet.length;
+      }
 
-        this.chromeProcess = spawn(chromePath, chromeArgs, {
-          detached: false,
-          stdio: "ignore",
-        });
+      // 设置localStorage和sessionStorage
+      if ((localStorage && Object.keys(localStorage).length > 0) || 
+          (sessionStorage && Object.keys(sessionStorage).length > 0)) {
+        
+        if (!this.page) {
+          throw new Error("No active page available for setting storage");
+        }
 
-        // 等待Chrome启动
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-
-        // 重新连接
-        try {
-          this.browser = await chromium.connectOverCDP(
-            `http://127.0.0.1:${reconnectInfo.debugPort}`
-          );
-          const context = this.browser.contexts()[0];
-          const pages = context.pages();
-          this.page = pages.length > 0 ? pages[0] : await context.newPage();
+        const storageResults = await this.page.evaluate((localData, sessionData) => {
+          const results = { localStorage: 0, sessionStorage: 0 };
           
-          // 恢复到之前的页面
-          if (reconnectInfo.currentUrl !== 'about:blank') {
-            await this.page.goto(reconnectInfo.currentUrl).catch(e => 
-              console.error(`[MCP] Failed to restore URL ${reconnectInfo.currentUrl}:`, e)
-            );
+          // 设置localStorage
+          if (localData) {
+            for (const [key, value] of Object.entries(localData)) {
+              try {
+                window.localStorage.setItem(key, value);
+                results.localStorage++;
+              } catch (e) {
+                console.error(`Failed to set localStorage ${key}:`, e);
+              }
+            }
           }
           
-          console.error(`[MCP] Browser restarted and reconnected successfully`);
-        } catch (error) {
-          console.error(`[MCP] Failed to reconnect after restart:`, error);
-        }
+          // 设置sessionStorage
+          if (sessionData) {
+            for (const [key, value] of Object.entries(sessionData)) {
+              try {
+                window.sessionStorage.setItem(key, value);
+                results.sessionStorage++;
+              } catch (e) {
+                console.error(`Failed to set sessionStorage ${key}:`, e);
+              }
+            }
+          }
+          
+          return results;
+        }, localStorage, sessionStorage);
+
+        results.localStorageSet = storageResults.localStorage;
+        results.sessionStorageSet = storageResults.sessionStorage;
+        console.error(`[MCP] Set ${storageResults.localStorage} localStorage items, ${storageResults.sessionStorage} sessionStorage items`);
       }
-      
-      const message = browserWasRunning && !restartBrowser
-        ? `Profile copied (some files may be incomplete due to browser lock). Use restartBrowser:true for complete copy.`
-        : `Profile copied successfully for session ${this.sessionId}`;
+
+      // 验证设置结果
+      if (cookiesToSet.length > 0) {
+        const currentCookies = await context.cookies();
+        console.error(`[MCP] Total cookies after setting: ${currentCookies.length}`);
+      }
 
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
-              message,
-              sourceProfile: copyResult.sourceProfile,
-              targetSession: copyResult.targetSession,
-              copiedItems: copyResult.copiedItems,
-              skippedItems: copyResult.skippedItems,
-              summary: {
-                copied: copyResult.copiedItems.length,
-                skipped: copyResult.skippedItems.length
+              message: `Successfully set storage data for session ${this.sessionId}`,
+              sessionId: this.sessionId,
+              results: {
+                cookiesSet: results.cookiesSet || 0,
+                localStorageSet: results.localStorageSet || 0,
+                sessionStorageSet: results.sessionStorageSet || 0
               },
-              browserRestarted: browserWasRunning && restartBrowser,
-              warning: browserWasRunning && !restartBrowser ? "Some files may be locked by running browser" : null
+              cookieDetails: cookiesToSet.map(c => ({ name: c.name, domain: c.domain }))
             }, null, 2),
           },
         ],
       };
     } catch (error) {
-      console.error(`[MCP] Profile copy failed for session ${this.sessionId}:`, error);
-      throw new Error(`Failed to copy user profile: ${error.message}`);
+      console.error(`[MCP] Failed to set storage data:`, error);
+      throw new Error(`Failed to set storage data: ${error.message}`);
     }
   },
+
 
   list_sessions: async function () {
     console.error("[MCP] Listing all active sessions");
@@ -1255,4 +1166,16 @@ const toolHandlers = {
   },
 };
 
-module.exports = { toolHandlers };
+// Filter handlers based on lite mode (only include handlers for lite tools)
+const liteTools = ["launch_browser", "close_browser", "run_script", "set_storage"];
+
+const filteredHandlers = process.env.MCP_LITE_MODE === 'true'
+  ? Object.fromEntries(
+      Object.entries(toolHandlers).filter(([name]) => liteTools.includes(name))
+    )
+  : toolHandlers;
+
+module.exports = { 
+  toolHandlers: filteredHandlers,
+  allToolHandlers: toolHandlers // Export all for debugging if needed
+};
