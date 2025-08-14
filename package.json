@@ -1,6 +1,6 @@
 {
   "name": "chrome-automation-mcp",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "MCP server for browser automation with custom scripts",
   "main": "index.js",
   "bin": {
