@@ -31,21 +31,54 @@ async function getBrowserBySessionId(sessionId) {
     throw new Error(`Session ${sessionId} is no longer active`);
   }
 
-  // 连接到该session的调试端口
+  // 连接到该session的调试端口，增加重试机制
   const { chromium } = require("playwright");
-  const browser = await chromium.connectOverCDP(
-    `http://127.0.0.1:${sessionInfo.debugPort}`
-  );
-  const context = browser.contexts()[0];
-  const pages = context.pages();
-  const page = pages.length > 0 ? pages[0] : await context.newPage();
+  let browser, page;
+  let lastError;
+  
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      console.error(`[MCP] Connecting to session ${sessionId} (attempt ${attempt}/3)`);
+      
+      browser = await chromium.connectOverCDP(
+        `http://127.0.0.1:${sessionInfo.debugPort}`
+      );
+      
+      // Add connection event handlers
+      browser.on('disconnected', () => {
+        console.error(`[MCP] Session ${sessionId} browser connection lost`);
+      });
+      
+      const context = browser.contexts()[0];
+      const pages = context.pages();
+      page = pages.length > 0 ? pages[0] : await context.newPage();
+      
+      // Test connection stability
+      await page.evaluate(() => document.readyState);
+      
+      console.error(`[MCP] Successfully connected to session ${sessionId}`);
+      break;
+      
+    } catch (error) {
+      lastError = error;
+      console.error(`[MCP] Session ${sessionId} connection attempt ${attempt} failed:`, error.message);
+      
+      if (attempt < 3) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  }
+  
+  if (!browser || !page) {
+    throw new Error(`Failed to connect to session ${sessionId} after 3 attempts: ${lastError?.message}`);
+  }
 
   return { browser, page, sessionInfo };
 }
 
 const toolHandlers = {
   launch_browser: async function (args) {
-    const { headless = false, debugPort } = args;
+    const { debugPort } = args;
 
     // 生成sessionId和目录
     const timestamp = Date.now();
@@ -126,7 +159,6 @@ const toolHandlers = {
     console.error(`[MCP] Using debug port: ${actualDebugPort}`);
 
     console.error(`[MCP] Launching browser with args:`, {
-      headless,
       debugPort: actualDebugPort,
       userDataDir: tempUserDataDir,
     });
@@ -215,9 +247,7 @@ const toolHandlers = {
       `--disable-ipc-flooding-protection`,
     ];
 
-    if (headless) {
-      chromeArgs.push("--headless=new");
-    }
+    // Browser always runs in visible mode
 
     console.error(`[MCP] Starting Chrome:`, chromePath, chromeArgs);
 
@@ -231,7 +261,7 @@ const toolHandlers = {
     // Wait for Chrome to start
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    // Connect with Playwright (with retry logic)
+    // Connect with Playwright (with retry logic and connection stability)
     let lastError;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -242,10 +272,19 @@ const toolHandlers = {
         this.browser = await chromium.connectOverCDP(
           `http://127.0.0.1:${actualDebugPort}`
         );
+        
+        // Add connection stability checks
+        this.browser.on('disconnected', () => {
+          console.error('[MCP] Browser connection lost - attempting to maintain session info');
+        });
+
         const context = this.browser.contexts()[0];
         const pages = context.pages();
         this.page = pages.length > 0 ? pages[0] : await context.newPage();
 
+        // Verify connection is stable by testing a simple operation
+        await this.page.evaluate(() => document.readyState);
+        
         console.error(`[MCP] Browser launched and connected successfully`);
 
         // 保存session信息到实例
@@ -328,9 +367,7 @@ const toolHandlers = {
             `--disable-ipc-flooding-protection`,
           ];
 
-          if (headless) {
-            chromeArgs.push("--headless=new");
-          }
+          // Browser always runs in visible mode
 
           const platform = os.platform();
           const chromePath =
@@ -391,31 +428,52 @@ const toolHandlers = {
     } else {
       console.error("[MCP] Connecting to browser on port:", debugPort);
 
-      try {
-        this.browser = await chromium.connectOverCDP(
-          `http://127.0.0.1:${debugPort}`
-        );
-        const context = this.browser.contexts()[0];
-        const pages = context.pages();
-        this.page = pages.length > 0 ? pages[0] : await context.newPage();
-        this.debugPort = debugPort;
+      let lastError;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          console.error(`[MCP] Connection attempt ${attempt}/3 to port ${debugPort}`);
+          
+          this.browser = await chromium.connectOverCDP(
+            `http://127.0.0.1:${debugPort}`
+          );
+          
+          // Add connection event handlers
+          this.browser.on('disconnected', () => {
+            console.error('[MCP] Browser connection lost on port', debugPort);
+          });
+          
+          const context = this.browser.contexts()[0];
+          const pages = context.pages();
+          this.page = pages.length > 0 ? pages[0] : await context.newPage();
+          this.debugPort = debugPort;
 
-        console.error("[MCP] Connected successfully");
+          // Test connection stability
+          await this.page.evaluate(() => document.readyState);
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Connected to browser on port ${debugPort}`,
-            },
-          ],
-        };
-      } catch (error) {
-        console.error("[MCP] Connection failed:", error);
-        throw new Error(
-          `Failed to connect to browser on port ${debugPort}: ${error.message}`
-        );
+          console.error("[MCP] Connected successfully");
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Connected to browser on port ${debugPort}`,
+              },
+            ],
+          };
+        } catch (error) {
+          lastError = error;
+          console.error(`[MCP] Connection attempt ${attempt} failed:`, error.message);
+          
+          if (attempt < 3) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
       }
+      
+      console.error("[MCP] All connection attempts failed");
+      throw new Error(
+        `Failed to connect to browser on port ${debugPort} after 3 attempts: ${lastError.message}`
+      );
     }
   },
 

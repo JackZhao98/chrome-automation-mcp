@@ -83,7 +83,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 1. **Launch Browser**
 ```json
-{"tool": "launch_browser", "arguments": {"headless": false}}
+{"tool": "launch_browser", "arguments": {}}
 ```
 
 2. **Navigate to Website**

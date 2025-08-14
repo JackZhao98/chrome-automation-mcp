@@ -81,7 +81,7 @@ npm install -g chrome-automation-mcp@1.2.0
 
 1. **启动浏览器**
 ```json
-{"tool": "launch_browser", "arguments": {"headless": false}}
+{"tool": "launch_browser", "arguments": {}}
 ```
 
 2. **导航到网站**

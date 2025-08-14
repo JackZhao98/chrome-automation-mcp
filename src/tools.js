@@ -8,11 +8,6 @@ const toolDefinitions = [
     inputSchema: {
       type: "object",
       properties: {
-        headless: {
-          type: "boolean",
-          description: "Run browser in headless mode",
-          default: false,
-        },
         debugPort: {
           type: "number",
           description: "Remote debugging port (auto-assigned per session if not provided)",
