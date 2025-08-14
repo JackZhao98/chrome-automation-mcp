@@ -1025,7 +1025,21 @@ const toolHandlers = {
   list_sessions: async function () {
     console.error("[MCP] Listing all active sessions");
 
-    const sessionRegistryFile = path.join(os.tmpdir(), "mcp-browser-sessions.json");
+    // 使用与ChromeAutomationServer相同的路径逻辑
+    const platform = os.platform();
+    let baseDir;
+    switch (platform) {
+      case 'darwin':
+        baseDir = '/tmp/chrome-browser-automation-sessions';
+        break;
+      case 'win32':
+        baseDir = 'C:\\temp\\chrome-browser-automation-sessions';
+        break;
+      default: // linux等
+        baseDir = '/tmp/chrome-browser-automation-sessions';
+        break;
+    }
+    const sessionRegistryFile = path.join(baseDir, "sessions-registry.json");
     
     try {
       if (!fs.existsSync(sessionRegistryFile)) {

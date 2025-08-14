@@ -19,16 +19,30 @@ class ChromeAutomationServer {
 
     // Session管理
     this.sessionId = this.generateSessionId();
-    // 确保使用系统临时目录，避免在工程目录创建文件
-    const systemTmpDir = os.tmpdir();
-    this.sessionDir = path.join(
-      systemTmpDir,
-      `chrome-debug-mcp-${this.sessionId}`
-    );
-    this.sessionRegistryFile = path.join(
-      systemTmpDir,
-      "mcp-browser-sessions.json"
-    );
+    // 使用固定的root path，不依赖os.tmpdir()
+    const platform = os.platform();
+    let baseDir;
+    switch (platform) {
+      case 'darwin':
+        baseDir = '/tmp/chrome-browser-automation-sessions';
+        break;
+      case 'win32':
+        baseDir = 'C:\\temp\\chrome-browser-automation-sessions';
+        break;
+      default: // linux等
+        baseDir = '/tmp/chrome-browser-automation-sessions';
+        break;
+    }
+    
+    // 确保baseDir目录存在
+    if (!fs.existsSync(baseDir)) {
+      fs.mkdirSync(baseDir, { recursive: true });
+      console.error(`[MCP] Created base directory: ${baseDir}`);
+    }
+    
+    // 固定session文件夹命名规则：session-{timestamp}-{random}
+    this.sessionDir = path.join(baseDir, `session-${this.sessionId}`);
+    this.sessionRegistryFile = path.join(baseDir, "sessions-registry.json");
 
     console.error(`[MCP] Session ID: ${this.sessionId}`);
   }
