@@ -3,3 +3,4 @@ scripts/
 test/
 .env
 *.log
+package-lock.json
