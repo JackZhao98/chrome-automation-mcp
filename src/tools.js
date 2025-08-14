@@ -22,13 +22,17 @@ const toolDefinitions = [
   },
   {
     name: "connect_browser",
-    description: "Connect to existing Chrome instance with debugging port",
+    description: "Connect to existing Chrome instance with debugging port or by session ID",
     inputSchema: {
       type: "object",
       properties: {
+        sessionId: {
+          type: "string",
+          description: "Session ID to connect to (will look up port from registry)",
+        },
         debugPort: {
           type: "number",
-          description: "Remote debugging port",
+          description: "Remote debugging port (used if sessionId not provided)",
           default: 9222,
         },
       },
@@ -44,6 +48,11 @@ const toolDefinitions = [
           type: "string",
           description: "URL to navigate to",
         },
+        sessionId: {
+          type: "string",
+          description: "Session ID to operate on",
+          default: "default",
+        },
         waitUntil: {
           type: "string",
           description: "When to consider navigation complete",
@@ -51,7 +60,7 @@ const toolDefinitions = [
           default: "networkidle",
         },
       },
-      required: ["url"],
+      required: ["url", "sessionId"],
     },
   },
   {
@@ -63,6 +72,11 @@ const toolDefinitions = [
         selector: {
           type: "string",
           description: "CSS selector or text to click",
+        },
+        sessionId: {
+          type: "string",
+          description: "Session ID to operate on",
+          default: "default",
         },
         clickByText: {
           type: "boolean",
@@ -86,7 +100,7 @@ const toolDefinitions = [
           default: 5000,
         },
       },
-      required: ["selector"],
+      required: ["selector", "sessionId"],
     },
   },
   {
@@ -103,6 +117,11 @@ const toolDefinitions = [
           type: "string",
           description: "Text to type",
         },
+        sessionId: {
+          type: "string",
+          description: "Session ID to operate on",
+          default: "default",
+        },
         clear: {
           type: "boolean",
           description: "Clear the field before typing",
@@ -114,7 +133,7 @@ const toolDefinitions = [
           default: 50,
         },
       },
-      required: ["selector", "text"],
+      required: ["selector", "text", "sessionId"],
     },
   },
   {
@@ -128,12 +147,18 @@ const toolDefinitions = [
           description:
             "CSS selector to read from (optional, reads whole page if not provided)",
         },
+        sessionId: {
+          type: "string",
+          description: "Session ID to operate on",
+          default: "default",
+        },
         all: {
           type: "boolean",
           description: "If true, return text from all matching elements",
           default: false,
         },
       },
+      required: ["sessionId"],
     },
   },
   {
@@ -224,7 +249,13 @@ const toolDefinitions = [
           type: "string",
           description: "Capture only this element",
         },
+        sessionId: {
+          type: "string",
+          description: "Session ID to operate on",
+          default: "default",
+        },
       },
+      required: ["sessionId"],
     },
   },
   {
@@ -379,6 +410,7 @@ const toolDefinitions = [
   },
   {
     name: "list_sessions",
+    lite: true, // Essential for session management
     description: "List all active browser automation sessions",
     inputSchema: {
       type: "object",
@@ -389,6 +421,35 @@ const toolDefinitions = [
     name: "close_browser",
     lite: true, // Essential for lite mode
     description: "Gracefully close the browser connection and clean up session data",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "Session ID to close (optional, closes current session if not specified)",
+        },
+      },
+    },
+  },
+  {
+    name: "close_all_browsers",
+    lite: true,
+    description: "Gracefully close all active browser sessions (tries to close browsers properly first, then force kill if needed)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        force: {
+          type: "boolean",
+          description: "Skip graceful close and immediately force kill all processes and clean directories",
+          default: false,
+        },
+      },
+    },
+  },
+  {
+    name: "cleanup_sessions",
+    lite: true,
+    description: "Clean up inactive/orphaned browser sessions and directories without affecting active sessions",
     inputSchema: {
       type: "object",
       properties: {},

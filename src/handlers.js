@@ -7,6 +7,38 @@ const os = require("os");
 
 const execAsync = promisify(exec);
 
+// 辅助函数：根据sessionId获取浏览器连接
+async function getBrowserBySessionId(sessionId) {
+  const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
+  
+  if (!require('fs').existsSync(sessionRegistryFile)) {
+    throw new Error(`No sessions registry found`);
+  }
+  
+  const sessions = JSON.parse(require('fs').readFileSync(sessionRegistryFile, 'utf8'));
+  const sessionInfo = sessions[sessionId];
+  
+  if (!sessionInfo) {
+    throw new Error(`Session ${sessionId} not found`);
+  }
+  
+  // 检查进程是否还活跃
+  try {
+    process.kill(sessionInfo.pid, 0);
+  } catch (e) {
+    throw new Error(`Session ${sessionId} is no longer active`);
+  }
+  
+  // 连接到该session的调试端口
+  const { chromium } = require("playwright");
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${sessionInfo.debugPort}`);
+  const context = browser.contexts()[0];
+  const pages = context.pages();
+  const page = pages.length > 0 ? pages[0] : await context.newPage();
+  
+  return { browser, page, sessionInfo };
+}
+
 const toolHandlers = {
   launch_browser: async function (args) {
     const { headless = false, debugPort } = args;
@@ -15,15 +47,60 @@ const toolHandlers = {
     const timestamp = Date.now();
     const randomCode = Math.random().toString(36).substring(2, 8);
     const sessionId = `${timestamp}-${randomCode}`;
-    const tempUserDataDir = `/tmp/chrome-automation-mcp-sessions/${sessionId}`;
+    const tempUserDataDir = `/tmp/chrome-browser-automation-sessions/${sessionId}`;
 
     // 设置注册表文件路径
-    const sessionRegistryFile = `/tmp/chrome-automation-mcp-sessions/sessions-registry.json`;
+    const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
 
     // 生成端口号（基于timestamp避免冲突）
     const basePort = 9222;
     const portOffset = timestamp % 1000; // 使用timestamp的最后3位作为偏移
     const actualDebugPort = debugPort || basePort + portOffset;
+
+    // 启动前自动清理无效的旧session
+    try {
+      console.error("[MCP] Cleaning up inactive sessions before launch...");
+      if (require('fs').existsSync(sessionRegistryFile)) {
+        const sessions = JSON.parse(require('fs').readFileSync(sessionRegistryFile, 'utf8'));
+        const activeSessions = {};
+        let cleanedCount = 0;
+        
+        for (const [oldSessionId, sessionInfo] of Object.entries(sessions)) {
+          let isActive = false;
+          
+          try {
+            // 快速检查进程和端口
+            process.kill(sessionInfo.pid, 0);
+            if (sessionInfo.chromeProcessPid) {
+              process.kill(sessionInfo.chromeProcessPid, 0);
+            }
+            isActive = true;
+          } catch (e) {
+            // Session无效，清理目录
+            try {
+              if (sessionInfo.sessionDir && require('fs').existsSync(sessionInfo.sessionDir)) {
+                require('fs').rmSync(sessionInfo.sessionDir, { recursive: true, force: true });
+                console.error(`[MCP] Auto-cleaned inactive session: ${oldSessionId}`);
+                cleanedCount++;
+              }
+            } catch (cleanupError) {
+              console.error(`[MCP] Failed to auto-cleanup session ${oldSessionId}:`, cleanupError.message);
+            }
+          }
+          
+          if (isActive) {
+            activeSessions[oldSessionId] = sessionInfo;
+          }
+        }
+        
+        if (cleanedCount > 0) {
+          require('fs').writeFileSync(sessionRegistryFile, JSON.stringify(activeSessions, null, 2));
+          console.error(`[MCP] Auto-cleaned ${cleanedCount} inactive sessions`);
+        }
+      }
+    } catch (error) {
+      console.error("[MCP] Auto-cleanup warning:", error.message);
+    }
 
     console.error(`[MCP] Using temp user data dir: ${tempUserDataDir}`);
     console.error(`[MCP] Using debug port: ${actualDebugPort}`);
@@ -257,54 +334,87 @@ const toolHandlers = {
   },
 
   connect_browser: async function (args) {
-    const { debugPort = 9222 } = args;
+    const { sessionId, debugPort = 9222 } = args;
 
-    console.error("[MCP] Connecting to browser on port:", debugPort);
+    if (sessionId && sessionId !== "default") {
+      console.error("[MCP] Connecting to browser by session ID:", sessionId);
+      try {
+        const { browser, page, sessionInfo } = await getBrowserBySessionId(sessionId);
+        this.browser = browser;
+        this.page = page;
+        this.debugPort = sessionInfo.debugPort;
+        this.sessionId = sessionId;
 
-    try {
-      this.browser = await chromium.connectOverCDP(
-        `http://127.0.0.1:${debugPort}`
-      );
-      const context = this.browser.contexts()[0];
-      const pages = context.pages();
-      this.page = pages.length > 0 ? pages[0] : await context.newPage();
-      this.debugPort = debugPort;
+        console.error("[MCP] Connected successfully to session:", sessionId);
 
-      console.error("[MCP] Connected successfully");
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Connected to browser session ${sessionId} on port ${sessionInfo.debugPort}`,
+            },
+          ],
+        };
+      } catch (error) {
+        console.error("[MCP] Connection to session failed:", error);
+        throw new Error(`Failed to connect to session ${sessionId}: ${error.message}`);
+      }
+    } else {
+      console.error("[MCP] Connecting to browser on port:", debugPort);
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Connected to browser on port ${debugPort}`,
-          },
-        ],
-      };
-    } catch (error) {
-      console.error("[MCP] Connection failed:", error);
-      throw new Error(
-        `Failed to connect to browser on port ${debugPort}: ${error.message}`
-      );
+      try {
+        this.browser = await chromium.connectOverCDP(
+          `http://127.0.0.1:${debugPort}`
+        );
+        const context = this.browser.contexts()[0];
+        const pages = context.pages();
+        this.page = pages.length > 0 ? pages[0] : await context.newPage();
+        this.debugPort = debugPort;
+
+        console.error("[MCP] Connected successfully");
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Connected to browser on port ${debugPort}`,
+            },
+          ],
+        };
+      } catch (error) {
+        console.error("[MCP] Connection failed:", error);
+        throw new Error(
+          `Failed to connect to browser on port ${debugPort}: ${error.message}`
+        );
+      }
     }
   },
 
   navigate_to: async function (args) {
-    const { url, waitUntil = "networkidle" } = args;
+    const { url, sessionId, waitUntil = "networkidle" } = args;
 
-    if (!this.page) {
+    let page = this.page;
+    
+    // 如果指定了sessionId且不是default，使用指定的session
+    if (sessionId && sessionId !== "default") {
+      const { page: sessionPage } = await getBrowserBySessionId(sessionId);
+      page = sessionPage;
+    }
+
+    if (!page) {
       throw new Error(
         "No browser page available. Launch or connect to browser first."
       );
     }
 
-    console.error("[MCP] Navigating to:", url);
-    await this.page.goto(url, { waitUntil });
+    console.error("[MCP] Navigating to:", url, sessionId ? `(Session: ${sessionId})` : '');
+    await page.goto(url, { waitUntil });
 
     return {
       content: [
         {
           type: "text",
-          text: `Navigated to ${url}`,
+          text: `Navigated to ${url}${sessionId ? ` (Session: ${sessionId})` : ''}`,
         },
       ],
     };
@@ -313,13 +423,22 @@ const toolHandlers = {
   click: async function (args) {
     const {
       selector,
+      sessionId,
       clickByText = false,
       timeout = 5000,
       force = false,
       index = 0,
     } = args;
 
-    if (!this.page) {
+    let page = this.page;
+    
+    // 如果指定了sessionId且不是default，使用指定的session
+    if (sessionId && sessionId !== "default") {
+      const { page: sessionPage } = await getBrowserBySessionId(sessionId);
+      page = sessionPage;
+    }
+
+    if (!page) {
       throw new Error(
         "No browser page available. Launch or connect to browser first."
       );
@@ -328,13 +447,14 @@ const toolHandlers = {
     console.error(
       "[MCP] Clicking:",
       selector,
-      clickByText ? "(by text)" : "(by selector)"
+      clickByText ? "(by text)" : "(by selector)",
+      sessionId ? `(Session: ${sessionId})` : ''
     );
 
     try {
       if (clickByText) {
         // Click element containing text
-        const elements = await this.page.getByText(selector).all();
+        const elements = await page.getByText(selector).all();
         if (elements.length > 0) {
           console.error(
             `[MCP] Found ${elements.length} elements with text "${selector}", clicking index ${index}`
@@ -347,20 +467,20 @@ const toolHandlers = {
         }
       } else {
         // Try to find all matching elements and click the visible one
-        let elements = await this.page.$$(selector);
+        let elements = await page.$$(selector);
 
         if (elements.length === 0) {
           // Try scrolling down to find the element
           console.error(
             "[MCP] Element not found, trying to scroll down to find it"
           );
-          await this.page.evaluate(() => {
+          await page.evaluate(() => {
             window.scrollBy(0, 500);
           });
           await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait for scroll
 
           // Try again after scrolling
-          const elementsAfterScroll = await this.page.$$(selector);
+          const elementsAfterScroll = await page.$$(selector);
           if (elementsAfterScroll.length === 0) {
             throw new Error(
               `No elements found for selector: ${selector}. Tried scrolling down but element still not found. The element might be further down the page - use the 'scroll' tool to scroll more, or check if the selector is correct.`
@@ -413,7 +533,7 @@ const toolHandlers = {
       // If all else fails, try using locator with more specific options
       try {
         console.error("[MCP] Trying alternative click method with locator");
-        await this.page
+        await page
           .locator(selector)
           .first()
           .click({ force: true, timeout: 2000 });
@@ -435,17 +555,25 @@ const toolHandlers = {
   },
 
   type_text: async function (args) {
-    const { selector, text, clear = true, delay = 50 } = args;
+    const { selector, text, sessionId, clear = true, delay = 50 } = args;
 
-    if (!this.page) {
+    let page = this.page;
+    
+    // 如果指定了sessionId且不是default，使用指定的session
+    if (sessionId && sessionId !== "default") {
+      const { page: sessionPage } = await getBrowserBySessionId(sessionId);
+      page = sessionPage;
+    }
+
+    if (!page) {
       throw new Error(
         "No browser page available. Launch or connect to browser first."
       );
     }
 
-    console.error("[MCP] Typing into:", selector);
+    console.error("[MCP] Typing into:", selector, sessionId ? `(Session: ${sessionId})` : '');
 
-    const element = await this.page.$(selector);
+    const element = await page.$(selector);
     if (!element) {
       throw new Error(
         `Input element not found: ${selector}. The element might be below the current view. Try using the 'scroll' tool to scroll down and find the input field.`
@@ -454,10 +582,10 @@ const toolHandlers = {
 
     if (clear) {
       await element.click();
-      await this.page.keyboard.down("Control");
-      await this.page.keyboard.press("A");
-      await this.page.keyboard.up("Control");
-      await this.page.keyboard.press("Backspace");
+      await page.keyboard.down("Control");
+      await page.keyboard.press("A");
+      await page.keyboard.up("Control");
+      await page.keyboard.press("Backspace");
     }
 
     await element.type(text, { delay });
@@ -473,30 +601,38 @@ const toolHandlers = {
   },
 
   read_text: async function (args = {}) {
-    const { selector, all = false } = args;
+    const { selector, sessionId, all = false } = args;
 
-    if (!this.page) {
+    let page = this.page;
+    
+    // 如果指定了sessionId且不是default，使用指定的session
+    if (sessionId && sessionId !== "default") {
+      const { page: sessionPage } = await getBrowserBySessionId(sessionId);
+      page = sessionPage;
+    }
+
+    if (!page) {
       throw new Error(
         "No browser page available. Launch or connect to browser first."
       );
     }
 
-    console.error("[MCP] Reading text from:", selector || "entire page");
+    console.error("[MCP] Reading text from:", selector || "entire page", sessionId ? `(Session: ${sessionId})` : '');
 
     let text;
 
     if (!selector) {
       // Read entire page text
-      text = await this.page.evaluate(() => document.body.innerText);
+      text = await page.evaluate(() => document.body.innerText);
     } else if (all) {
       // Read all matching elements
-      const texts = await this.page.$eval(selector, (elements) =>
+      const texts = await page.$eval(selector, (elements) =>
         elements.map((el) => el.innerText || el.textContent)
       );
       text = texts.join("\n---\n");
     } else {
       // Read single element
-      const element = await this.page.$(selector);
+      const element = await page.$(selector);
       if (!element) {
         throw new Error(
           `Element not found: ${selector}. The element might be below the current view. Try using the 'scroll' tool to scroll down and find the element.`
@@ -699,22 +835,30 @@ const toolHandlers = {
   },
 
   screenshot: async function (args = {}) {
-    const { fullPage = false, selector } = args;
+    const { fullPage = false, selector, sessionId } = args;
 
-    if (!this.page) {
+    let page = this.page;
+    
+    // 如果指定了sessionId且不是default，使用指定的session
+    if (sessionId && sessionId !== "default") {
+      const { page: sessionPage } = await getBrowserBySessionId(sessionId);
+      page = sessionPage;
+    }
+
+    if (!page) {
       throw new Error(
         "No browser page available. Launch or connect to browser first."
       );
     }
 
-    console.error("[MCP] Taking screenshot");
+    console.error("[MCP] Taking screenshot", sessionId ? `(Session: ${sessionId})` : '');
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const filename = `screenshot-${timestamp}.png`;
     const filepath = path.join(process.cwd(), filename);
 
     if (selector) {
-      const element = await this.page.$(selector);
+      const element = await page.$(selector);
       if (!element) {
         throw new Error(
           `Element not found for screenshot: ${selector}. The element might be below the current view. Try using the 'scroll' tool to scroll down and bring the element into view before taking a screenshot.`
@@ -722,7 +866,7 @@ const toolHandlers = {
       }
       await element.screenshot({ path: filepath });
     } else {
-      await this.page.screenshot({ path: filepath, fullPage });
+      await page.screenshot({ path: filepath, fullPage });
     }
 
     return {
@@ -1176,7 +1320,7 @@ const toolHandlers = {
     console.error("[MCP] Listing all active sessions");
 
     // 使用统一的session目录路径
-    const sessionRegistryFile = `/tmp/chrome-automation-mcp-sessions/sessions-registry.json`;
+    const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
 
     try {
       if (!require('fs').existsSync(sessionRegistryFile)) {
@@ -1197,12 +1341,29 @@ const toolHandlers = {
       for (const [sessionId, sessionInfo] of Object.entries(sessions)) {
         let isActive = false;
 
-        // 检查进程是否还在运行
+        // 多重检查确保session真正活跃
         try {
-          process.kill(sessionInfo.pid, 0); // 这不会真的kill，只是检查进程是否存在
-          isActive = true;
+          // 1. 检查MCP进程是否还在运行
+          process.kill(sessionInfo.pid, 0);
+          
+          // 2. 检查Chrome进程是否还在运行
+          if (sessionInfo.chromeProcessPid) {
+            process.kill(sessionInfo.chromeProcessPid, 0);
+          }
+          
+          // 3. 尝试连接到调试端口验证Chrome是否响应
+          const { chromium } = require("playwright");
+          try {
+            const browser = await chromium.connectOverCDP(`http://127.0.0.1:${sessionInfo.debugPort}`);
+            await browser.close();
+            isActive = true;
+          } catch (e) {
+            console.error(`[MCP] Session ${sessionId} debug port ${sessionInfo.debugPort} not responsive:`, e.message);
+            isActive = false;
+          }
         } catch (e) {
-          // 进程不存在
+          // 进程不存在或端口不响应
+          console.error(`[MCP] Session ${sessionId} is inactive:`, e.message);
           isActive = false;
         }
 
@@ -1216,6 +1377,16 @@ const toolHandlers = {
             chromeProcessPid: sessionInfo.chromeProcessPid,
             isCurrentSession: sessionId === (this.sessionId || null),
           });
+        } else {
+          // 清理无效session的目录
+          try {
+            if (sessionInfo.sessionDir && require('fs').existsSync(sessionInfo.sessionDir)) {
+              require('fs').rmSync(sessionInfo.sessionDir, { recursive: true, force: true });
+              console.error(`[MCP] Cleaned up directory for inactive session ${sessionId}: ${sessionInfo.sessionDir}`);
+            }
+          } catch (cleanupError) {
+            console.error(`[MCP] Failed to cleanup directory for session ${sessionId}:`, cleanupError.message);
+          }
         }
       }
 
@@ -1256,7 +1427,79 @@ const toolHandlers = {
     }
   },
 
-  close_browser: async function () {
+  close_browser: async function (args = {}) {
+    const { sessionId } = args;
+    
+    // 如果指定了sessionId且不是default，关闭指定的session
+    if (sessionId && sessionId !== "default") {
+      console.error(`[MCP] Closing browser session: ${sessionId}`);
+      
+      try {
+        const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
+        
+        if (!require('fs').existsSync(sessionRegistryFile)) {
+          throw new Error(`No sessions registry found`);
+        }
+        
+        const sessions = JSON.parse(require('fs').readFileSync(sessionRegistryFile, 'utf8'));
+        const sessionInfo = sessions[sessionId];
+        
+        if (!sessionInfo) {
+          throw new Error(`Session ${sessionId} not found`);
+        }
+        
+        // 尝试连接到session并关闭
+        try {
+          const { chromium } = require("playwright");
+          const browser = await chromium.connectOverCDP(`http://127.0.0.1:${sessionInfo.debugPort}`);
+          await browser.close();
+          console.error(`[MCP] Browser for session ${sessionId} closed gracefully`);
+        } catch (e) {
+          console.error(`[MCP] Could not gracefully close browser for session ${sessionId}:`, e.message);
+        }
+        
+        // 强制终止Chrome进程
+        try {
+          process.kill(sessionInfo.chromeProcessPid, 'SIGTERM');
+          console.error(`[MCP] Sent SIGTERM to Chrome process ${sessionInfo.chromeProcessPid}`);
+          
+          setTimeout(() => {
+            try {
+              process.kill(sessionInfo.chromeProcessPid, 'SIGKILL');
+              console.error(`[MCP] Force killed Chrome process ${sessionInfo.chromeProcessPid}`);
+            } catch (e) {
+              // Process already dead
+            }
+          }, 3000);
+        } catch (e) {
+          console.error(`[MCP] Could not kill Chrome process:`, e.message);
+        }
+        
+        // 从注册表移除session
+        delete sessions[sessionId];
+        require('fs').writeFileSync(sessionRegistryFile, JSON.stringify(sessions, null, 2));
+        console.error(`[MCP] Session unregistered: ${sessionId}`);
+        
+        // 清理session目录
+        if (sessionInfo.sessionDir && require('fs').existsSync(sessionInfo.sessionDir)) {
+          require('fs').rmSync(sessionInfo.sessionDir, { recursive: true, force: true });
+          console.error(`[MCP] Session directory cleaned: ${sessionInfo.sessionDir}`);
+        }
+        
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Session ${sessionId} closed successfully`,
+            },
+          ],
+        };
+      } catch (error) {
+        throw new Error(`Failed to close session ${sessionId}: ${error.message}`);
+      }
+    }
+    
+    // 关闭当前session
     console.error(`[MCP] Closing browser (Session: ${this.sessionId || 'unknown'})`);
 
     let browserClosed = false;
@@ -1346,12 +1589,236 @@ const toolHandlers = {
       ],
     };
   },
+
+  close_all_browsers: async function (args = {}) {
+    const { force = false } = args;
+    
+    console.error(`[MCP] ${force ? 'FORCE' : 'Gracefully'} closing all browser sessions`);
+    
+    const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
+    
+    if (!require('fs').existsSync(sessionRegistryFile)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "No active sessions found",
+          },
+        ],
+      };
+    }
+    
+    const sessions = JSON.parse(require('fs').readFileSync(sessionRegistryFile, 'utf8'));
+    const sessionIds = Object.keys(sessions);
+    
+    if (sessionIds.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "No active sessions found",
+          },
+        ],
+      };
+    }
+    
+    console.error(`[MCP] Found ${sessionIds.length} sessions to close`);
+    
+    let closedCount = 0;
+    let errorCount = 0;
+    
+    for (const sessionId of sessionIds) {
+      try {
+        const sessionInfo = sessions[sessionId];
+        
+        if (force) {
+          // Force模式：直接kill进程
+          try {
+            if (sessionInfo.chromeProcessPid) {
+              process.kill(sessionInfo.chromeProcessPid, 'SIGKILL');
+              console.error(`[MCP] Force killed Chrome process ${sessionInfo.chromeProcessPid} for session ${sessionId}`);
+            }
+          } catch (e) {
+            console.error(`[MCP] Chrome process ${sessionInfo.chromeProcessPid} already dead`);
+          }
+        } else {
+          // 优雅模式：先尝试优雅关闭，失败后force kill
+          try {
+            const { chromium } = require("playwright");
+            const browser = await chromium.connectOverCDP(`http://127.0.0.1:${sessionInfo.debugPort}`);
+            await browser.close();
+            console.error(`[MCP] Browser for session ${sessionId} closed gracefully`);
+          } catch (e) {
+            console.error(`[MCP] Could not gracefully close session ${sessionId}, force killing...`);
+            try {
+              if (sessionInfo.chromeProcessPid) {
+                process.kill(sessionInfo.chromeProcessPid, 'SIGKILL');
+                console.error(`[MCP] Force killed Chrome process ${sessionInfo.chromeProcessPid}`);
+              }
+            } catch (killError) {
+              console.error(`[MCP] Process already dead: ${sessionInfo.chromeProcessPid}`);
+            }
+          }
+        }
+        
+        // 清理session目录
+        if (sessionInfo.sessionDir && require('fs').existsSync(sessionInfo.sessionDir)) {
+          require('fs').rmSync(sessionInfo.sessionDir, { recursive: true, force: true });
+          console.error(`[MCP] Cleaned directory: ${sessionInfo.sessionDir}`);
+        }
+        
+        closedCount++;
+      } catch (error) {
+        console.error(`[MCP] Failed to close session ${sessionId}:`, error.message);
+        errorCount++;
+      }
+    }
+    
+    // 清空注册表
+    require('fs').writeFileSync(sessionRegistryFile, '{}');
+    console.error("[MCP] Sessions registry cleared");
+    
+    const message = `Closed ${closedCount} active sessions${errorCount > 0 ? `, ${errorCount} failed` : ''}`;
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: message,
+        },
+      ],
+    };
+  },
+
+  cleanup_sessions: async function () {
+    console.error("[MCP] Cleaning up inactive sessions and orphaned directories (preserving active sessions)");
+    
+    const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
+    const baseDir = `/tmp/chrome-automation-mcp-sessions`;
+    
+    let cleanedCount = 0;
+    let orphanedDirs = [];
+    let removedSessions = 0;
+    
+    // 1. 清理注册表中的无效session，保留活跃的
+    if (require('fs').existsSync(sessionRegistryFile)) {
+      try {
+        const sessions = JSON.parse(require('fs').readFileSync(sessionRegistryFile, 'utf8'));
+        const activeSessions = {};
+        
+        console.error(`[MCP] Checking ${Object.keys(sessions).length} registered sessions`);
+        
+        for (const [sessionId, sessionInfo] of Object.entries(sessions)) {
+          let isActive = false;
+          
+          try {
+            // 多重检查确保session真正活跃
+            process.kill(sessionInfo.pid, 0);
+            if (sessionInfo.chromeProcessPid) {
+              process.kill(sessionInfo.chromeProcessPid, 0);
+            }
+            
+            // 尝试连接验证Chrome响应
+            const { chromium } = require("playwright");
+            const browser = await chromium.connectOverCDP(`http://127.0.0.1:${sessionInfo.debugPort}`);
+            await browser.close();
+            isActive = true;
+            console.error(`[MCP] Session ${sessionId} is active, preserving`);
+          } catch (e) {
+            // Session无效，清理目录
+            console.error(`[MCP] Session ${sessionId} is inactive: ${e.message}`);
+            try {
+              if (sessionInfo.sessionDir && require('fs').existsSync(sessionInfo.sessionDir)) {
+                require('fs').rmSync(sessionInfo.sessionDir, { recursive: true, force: true });
+                console.error(`[MCP] Cleaned directory for inactive session ${sessionId}: ${sessionInfo.sessionDir}`);
+                cleanedCount++;
+              }
+              removedSessions++;
+            } catch (cleanupError) {
+              console.error(`[MCP] Failed to cleanup directory for session ${sessionId}:`, cleanupError.message);
+            }
+          }
+          
+          if (isActive) {
+            activeSessions[sessionId] = sessionInfo;
+          }
+        }
+        
+        // 只有当有变化时才更新注册表
+        if (Object.keys(activeSessions).length !== Object.keys(sessions).length) {
+          require('fs').writeFileSync(sessionRegistryFile, JSON.stringify(activeSessions, null, 2));
+          console.error(`[MCP] Updated sessions registry: kept ${Object.keys(activeSessions).length} active, removed ${removedSessions} inactive`);
+        } else {
+          console.error(`[MCP] All ${Object.keys(sessions).length} sessions are active, no cleanup needed`);
+        }
+      } catch (error) {
+        console.error("[MCP] Error cleaning sessions registry:", error.message);
+      }
+    }
+    
+    // 2. 清理孤立的session目录（没有在注册表中的目录）
+    if (require('fs').existsSync(baseDir)) {
+      try {
+        const allDirs = require('fs').readdirSync(baseDir, { withFileTypes: true })
+          .filter(dirent => dirent.isDirectory())
+          .map(dirent => dirent.name);
+          
+        const registeredDirs = new Set();
+        if (require('fs').existsSync(sessionRegistryFile)) {
+          const sessions = JSON.parse(require('fs').readFileSync(sessionRegistryFile, 'utf8'));
+          Object.values(sessions).forEach(sessionInfo => {
+            if (sessionInfo.sessionDir) {
+              const dirName = path.basename(sessionInfo.sessionDir);
+              registeredDirs.add(dirName);
+            }
+          });
+        }
+        
+        // 找到孤立的目录
+        for (const dirName of allDirs) {
+          if (dirName !== 'sessions-registry.json' && !registeredDirs.has(dirName)) {
+            const orphanedPath = path.join(baseDir, dirName);
+            try {
+              require('fs').rmSync(orphanedPath, { recursive: true, force: true });
+              orphanedDirs.push(dirName);
+              console.error(`[MCP] Cleaned orphaned directory: ${orphanedPath}`);
+              cleanedCount++;
+            } catch (cleanupError) {
+              console.error(`[MCP] Failed to cleanup orphaned directory ${orphanedPath}:`, cleanupError.message);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("[MCP] Error scanning for orphaned directories:", error.message);
+      }
+    }
+    
+    const results = [];
+    if (removedSessions > 0) results.push(`${removedSessions} inactive sessions removed`);
+    if (orphanedDirs.length > 0) results.push(`${orphanedDirs.length} orphaned directories cleaned`);
+    if (cleanedCount > 0) results.push(`${cleanedCount} total directories cleaned`);
+    
+    const message = results.length > 0 
+      ? `Cleanup completed: ${results.join(', ')}`
+      : "No inactive sessions or orphaned directories found";
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: message,
+        },
+      ],
+    };
+  },
 };
 
 // Filter handlers based on lite mode (only include handlers for lite tools)
 const liteTools = [
   "launch_browser",
   "close_browser",
+  "close_all_browsers",
+  "cleanup_sessions",
   "run_script",
   "set_storage",
 ];
