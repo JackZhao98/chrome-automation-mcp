@@ -13,10 +13,6 @@ const toolDefinitions = [
           description: "Run browser in headless mode",
           default: false,
         },
-        userDataDir: {
-          type: "string",
-          description: "Chrome user data directory path (auto-generated per session if not provided)",
-        },
         debugPort: {
           type: "number",
           description: "Remote debugging port (auto-assigned per session if not provided)",
