@@ -1515,15 +1515,19 @@ const toolHandlers = {
         }
 
         // 尝试连接到session并关闭
+        let browserClosed = false;
         try {
           const { chromium } = require("playwright");
           const browser = await chromium.connectOverCDP(
             `http://127.0.0.1:${sessionInfo.debugPort}`
           );
           await browser.close();
+          browserClosed = true;
           console.error(
             `[MCP] Browser for session ${sessionId} closed gracefully`
           );
+          // 等待浏览器完全释放文件锁定
+          await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (e) {
           console.error(
             `[MCP] Could not gracefully close browser for session ${sessionId}:`,
@@ -1531,25 +1535,47 @@ const toolHandlers = {
           );
         }
 
-        // 强制终止Chrome进程
-        try {
-          process.kill(sessionInfo.chromeProcessPid, "SIGTERM");
-          console.error(
-            `[MCP] Sent SIGTERM to Chrome process ${sessionInfo.chromeProcessPid}`
-          );
+        // 强制终止Chrome进程并等待退出
+        if (sessionInfo.chromeProcessPid) {
+          try {
+            // 先尝试优雅终止
+            process.kill(sessionInfo.chromeProcessPid, "SIGTERM");
+            console.error(
+              `[MCP] Sent SIGTERM to Chrome process ${sessionInfo.chromeProcessPid}`
+            );
 
-          setTimeout(() => {
-            try {
-              process.kill(sessionInfo.chromeProcessPid, "SIGKILL");
-              console.error(
-                `[MCP] Force killed Chrome process ${sessionInfo.chromeProcessPid}`
-              );
-            } catch (e) {
-              // Process already dead
-            }
-          }, 3000);
-        } catch (e) {
-          console.error(`[MCP] Could not kill Chrome process:`, e.message);
+            // 等待进程退出
+            await new Promise((resolve) => {
+              const timeout = setTimeout(() => {
+                try {
+                  process.kill(sessionInfo.chromeProcessPid, "SIGKILL");
+                  console.error(
+                    `[MCP] Force killed Chrome process ${sessionInfo.chromeProcessPid}`
+                  );
+                } catch (e) {
+                  // Process already dead
+                }
+                resolve();
+              }, 3000);
+
+              // 定期检查进程是否还存在
+              const checkInterval = setInterval(() => {
+                try {
+                  process.kill(sessionInfo.chromeProcessPid, 0);
+                } catch (e) {
+                  // Process is dead
+                  clearTimeout(timeout);
+                  clearInterval(checkInterval);
+                  console.error(
+                    `[MCP] Chrome process ${sessionInfo.chromeProcessPid} exited`
+                  );
+                  resolve();
+                }
+              }, 200);
+            });
+          } catch (e) {
+            console.error(`[MCP] Could not kill Chrome process:`, e.message);
+          }
         }
 
         // 从注册表移除session
@@ -1558,27 +1584,56 @@ const toolHandlers = {
           sessionRegistryFile,
           JSON.stringify(sessions, null, 2)
         );
-        console.error(`[MCP] Session unregistered: ${sessionId}`);
+        console.error(`[MCP] Session unregistered from registry: ${sessionId}`);
 
-        // 清理session目录
-        if (
-          sessionInfo.sessionDir &&
-          require("fs").existsSync(sessionInfo.sessionDir)
-        ) {
-          require("fs").rmSync(sessionInfo.sessionDir, {
-            recursive: true,
-            force: true,
-          });
-          console.error(
-            `[MCP] Session directory cleaned: ${sessionInfo.sessionDir}`
-          );
+        // 确保清理session目录（使用重试机制）
+        if (sessionInfo.sessionDir) {
+          let retryCount = 0;
+          const maxRetries = 3;
+          let deleted = false;
+
+          while (retryCount < maxRetries && !deleted) {
+            try {
+              if (require("fs").existsSync(sessionInfo.sessionDir)) {
+                require("fs").rmSync(sessionInfo.sessionDir, {
+                  recursive: true,
+                  force: true,
+                });
+                console.error(
+                  `[MCP] Session directory successfully deleted: ${sessionInfo.sessionDir}`
+                );
+                deleted = true;
+              } else {
+                console.error(
+                  `[MCP] Session directory already removed: ${sessionInfo.sessionDir}`
+                );
+                deleted = true;
+              }
+            } catch (cleanupError) {
+              retryCount++;
+              console.error(
+                `[MCP] Failed to delete session directory (attempt ${retryCount}/${maxRetries}): ${cleanupError.message}`
+              );
+              
+              if (retryCount < maxRetries) {
+                // 等待更长时间再重试
+                await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+              }
+            }
+          }
+
+          if (!deleted) {
+            console.error(
+              `[MCP] Warning: Could not delete session directory after ${maxRetries} attempts: ${sessionInfo.sessionDir}`
+            );
+          }
         }
 
         return {
           content: [
             {
               type: "text",
-              text: `Session ${sessionId} closed successfully`,
+              text: `Session ${sessionId} closed and directory cleaned successfully`,
             },
           ],
         };
@@ -1605,6 +1660,8 @@ const toolHandlers = {
         console.error("[MCP] Browser closed gracefully");
         this.browser = null;
         this.page = null;
+        // 等待浏览器完全释放文件锁定
+        await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (e) {
         console.error("[MCP] Error closing browser gracefully:", e);
       }
@@ -1613,6 +1670,7 @@ const toolHandlers = {
     // 优雅终止Chrome进程
     if (this.chromeProcess && !this.chromeProcess.killed) {
       try {
+        const processPid = this.chromeProcess.pid;
         // 先尝试SIGTERM优雅终止
         this.chromeProcess.kill("SIGTERM");
         console.error("[MCP] Sent SIGTERM to Chrome process");
@@ -1620,26 +1678,35 @@ const toolHandlers = {
         // 等待进程优雅退出
         await new Promise((resolve) => {
           const timeout = setTimeout(() => {
-            if (!this.chromeProcess.killed) {
-              console.error(
-                "[MCP] Chrome process didn't exit gracefully, force killing..."
-              );
-              this.chromeProcess.kill("SIGKILL");
+            try {
+              process.kill(processPid, "SIGKILL");
+              console.error("[MCP] Force killed Chrome process");
+            } catch (e) {
+              // Process already dead
             }
+            processClosed = true;
             resolve();
           }, 3000);
 
-          this.chromeProcess.on("exit", () => {
-            clearTimeout(timeout);
-            processClosed = true;
-            console.error("[MCP] Chrome process exited gracefully");
-            resolve();
-          });
+          // 定期检查进程是否还存在
+          const checkInterval = setInterval(() => {
+            try {
+              process.kill(processPid, 0);
+            } catch (e) {
+              // Process is dead
+              clearTimeout(timeout);
+              clearInterval(checkInterval);
+              processClosed = true;
+              console.error("[MCP] Chrome process exited gracefully");
+              resolve();
+            }
+          }, 200);
         });
 
         this.chromeProcess = null;
       } catch (e) {
         console.error("[MCP] Error terminating Chrome process:", e);
+        processClosed = true; // 假设已经终止
       }
     }
 
@@ -1657,21 +1724,49 @@ const toolHandlers = {
             this.sessionRegistryFile,
             JSON.stringify(sessions, null, 2)
           );
-          console.error(`[MCP] Session unregistered: ${this.sessionId}`);
+          console.error(`[MCP] Session unregistered from registry: ${this.sessionId}`);
 
-          // 清理session目录
-          if (
-            sessionInfo &&
-            sessionInfo.sessionDir &&
-            require("fs").existsSync(sessionInfo.sessionDir)
-          ) {
-            require("fs").rmSync(sessionInfo.sessionDir, {
-              recursive: true,
-              force: true,
-            });
-            console.error(
-              `[MCP] Session directory cleaned: ${sessionInfo.sessionDir}`
-            );
+          // 确保清理session目录（使用重试机制）
+          if (sessionInfo && sessionInfo.sessionDir) {
+            let retryCount = 0;
+            const maxRetries = 3;
+            let deleted = false;
+
+            while (retryCount < maxRetries && !deleted) {
+              try {
+                if (require("fs").existsSync(sessionInfo.sessionDir)) {
+                  require("fs").rmSync(sessionInfo.sessionDir, {
+                    recursive: true,
+                    force: true,
+                  });
+                  console.error(
+                    `[MCP] Session directory successfully deleted: ${sessionInfo.sessionDir}`
+                  );
+                  deleted = true;
+                } else {
+                  console.error(
+                    `[MCP] Session directory already removed: ${sessionInfo.sessionDir}`
+                  );
+                  deleted = true;
+                }
+              } catch (cleanupError) {
+                retryCount++;
+                console.error(
+                  `[MCP] Failed to delete session directory (attempt ${retryCount}/${maxRetries}): ${cleanupError.message}`
+                );
+                
+                if (retryCount < maxRetries) {
+                  // 等待更长时间再重试
+                  await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+                }
+              }
+            }
+
+            if (!deleted) {
+              console.error(
+                `[MCP] Warning: Could not delete session directory after ${maxRetries} attempts: ${sessionInfo.sessionDir}`
+              );
+            }
           }
         }
       } catch (error) {
@@ -1681,10 +1776,10 @@ const toolHandlers = {
 
     const status =
       browserClosed && processClosed
-        ? "Browser and process closed gracefully"
+        ? "Browser and process closed gracefully, session directory cleaned"
         : browserClosed
-        ? "Browser closed gracefully, process terminated"
-        : "Browser force closed";
+        ? "Browser closed gracefully, process terminated, session directory cleaned"
+        : "Browser force closed, session directory cleaned";
 
     return {
       content: [
