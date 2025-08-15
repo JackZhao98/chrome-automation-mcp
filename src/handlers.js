@@ -35,42 +35,48 @@ async function getBrowserBySessionId(sessionId) {
   const { chromium } = require("playwright");
   let browser, page;
   let lastError;
-  
+
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      console.error(`[MCP] Connecting to session ${sessionId} (attempt ${attempt}/3)`);
-      
+      console.error(
+        `[MCP] Connecting to session ${sessionId} (attempt ${attempt}/3)`
+      );
+
       browser = await chromium.connectOverCDP(
         `http://127.0.0.1:${sessionInfo.debugPort}`
       );
-      
+
       // Add connection event handlers
-      browser.on('disconnected', () => {
+      browser.on("disconnected", () => {
         console.error(`[MCP] Session ${sessionId} browser connection lost`);
       });
-      
+
       const context = browser.contexts()[0];
       const pages = context.pages();
       page = pages.length > 0 ? pages[0] : await context.newPage();
-      
+
       // Test connection stability
       await page.evaluate(() => document.readyState);
-      
+
       console.error(`[MCP] Successfully connected to session ${sessionId}`);
       break;
-      
     } catch (error) {
       lastError = error;
-      console.error(`[MCP] Session ${sessionId} connection attempt ${attempt} failed:`, error.message);
-      
+      console.error(
+        `[MCP] Session ${sessionId} connection attempt ${attempt} failed:`,
+        error.message
+      );
+
       if (attempt < 3) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
   }
-  
+
   if (!browser || !page) {
-    throw new Error(`Failed to connect to session ${sessionId} after 3 attempts: ${lastError?.message}`);
+    throw new Error(
+      `Failed to connect to session ${sessionId} after 3 attempts: ${lastError?.message}`
+    );
   }
 
   return { browser, page, sessionInfo };
@@ -92,7 +98,7 @@ const toolHandlers = {
     // 生成端口号（基于timestamp避免冲突）
     const basePort = 9222;
     const portOffset = timestamp % 1000; // 使用timestamp的最后3位作为偏移
-    const actualDebugPort = debugPort || basePort + portOffset;
+    var actualDebugPort = debugPort || basePort + portOffset;
 
     // 启动前自动清理无效的旧session
     try {
@@ -272,10 +278,12 @@ const toolHandlers = {
         this.browser = await chromium.connectOverCDP(
           `http://127.0.0.1:${actualDebugPort}`
         );
-        
+
         // Add connection stability checks
-        this.browser.on('disconnected', () => {
-          console.error('[MCP] Browser connection lost - attempting to maintain session info');
+        this.browser.on("disconnected", () => {
+          console.error(
+            "[MCP] Browser connection lost - attempting to maintain session info"
+          );
         });
 
         const context = this.browser.contexts()[0];
@@ -284,7 +292,7 @@ const toolHandlers = {
 
         // Verify connection is stable by testing a simple operation
         await this.page.evaluate(() => document.readyState);
-        
+
         console.error(`[MCP] Browser launched and connected successfully`);
 
         // 保存session信息到实例
@@ -431,17 +439,19 @@ const toolHandlers = {
       let lastError;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          console.error(`[MCP] Connection attempt ${attempt}/3 to port ${debugPort}`);
-          
+          console.error(
+            `[MCP] Connection attempt ${attempt}/3 to port ${debugPort}`
+          );
+
           this.browser = await chromium.connectOverCDP(
             `http://127.0.0.1:${debugPort}`
           );
-          
+
           // Add connection event handlers
-          this.browser.on('disconnected', () => {
-            console.error('[MCP] Browser connection lost on port', debugPort);
+          this.browser.on("disconnected", () => {
+            console.error("[MCP] Browser connection lost on port", debugPort);
           });
-          
+
           const context = this.browser.contexts()[0];
           const pages = context.pages();
           this.page = pages.length > 0 ? pages[0] : await context.newPage();
@@ -462,14 +472,17 @@ const toolHandlers = {
           };
         } catch (error) {
           lastError = error;
-          console.error(`[MCP] Connection attempt ${attempt} failed:`, error.message);
-          
+          console.error(
+            `[MCP] Connection attempt ${attempt} failed:`,
+            error.message
+          );
+
           if (attempt < 3) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, 1000));
           }
         }
       }
-      
+
       console.error("[MCP] All connection attempts failed");
       throw new Error(
         `Failed to connect to browser on port ${debugPort} after 3 attempts: ${lastError.message}`
@@ -1585,7 +1598,7 @@ const toolHandlers = {
             `[MCP] Browser for session ${sessionId} closed gracefully`
           );
           // 等待浏览器完全释放文件锁定
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         } catch (e) {
           console.error(
             `[MCP] Could not gracefully close browser for session ${sessionId}:`,
@@ -1672,10 +1685,12 @@ const toolHandlers = {
               console.error(
                 `[MCP] Failed to delete session directory (attempt ${retryCount}/${maxRetries}): ${cleanupError.message}`
               );
-              
+
               if (retryCount < maxRetries) {
                 // 等待更长时间再重试
-                await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+                await new Promise((resolve) =>
+                  setTimeout(resolve, 1000 * retryCount)
+                );
               }
             }
           }
@@ -1719,7 +1734,7 @@ const toolHandlers = {
         this.browser = null;
         this.page = null;
         // 等待浏览器完全释放文件锁定
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       } catch (e) {
         console.error("[MCP] Error closing browser gracefully:", e);
       }
@@ -1782,7 +1797,9 @@ const toolHandlers = {
             this.sessionRegistryFile,
             JSON.stringify(sessions, null, 2)
           );
-          console.error(`[MCP] Session unregistered from registry: ${this.sessionId}`);
+          console.error(
+            `[MCP] Session unregistered from registry: ${this.sessionId}`
+          );
 
           // 确保清理session目录（使用重试机制）
           if (sessionInfo && sessionInfo.sessionDir) {
@@ -1812,10 +1829,12 @@ const toolHandlers = {
                 console.error(
                   `[MCP] Failed to delete session directory (attempt ${retryCount}/${maxRetries}): ${cleanupError.message}`
                 );
-                
+
                 if (retryCount < maxRetries) {
                   // 等待更长时间再重试
-                  await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, 1000 * retryCount)
+                  );
                 }
               }
             }
