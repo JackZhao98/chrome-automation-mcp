@@ -1060,18 +1060,51 @@ const toolHandlers = {
   },
 
   run_script: async function (args) {
-    const { scriptPath, args: scriptArgs = {} } = args;
+    const { scriptPath, scriptUrl, args: scriptArgs = {} } = args;
 
     if (!this.browser || !this.page) {
       throw new Error(
         "Browser not connected. Use launch_browser or connect_browser first."
       );
     }
-
-    console.error("[MCP] Running script:", scriptPath);
-
-    // Read the script file
-    const scriptContent = await fs.readFile(scriptPath, "utf-8");
+    
+    // Validate that exactly one of scriptPath or scriptUrl is provided
+    if (!scriptPath && !scriptUrl) {
+      throw new Error("Either scriptPath or scriptUrl must be provided");
+    }
+    
+    if (scriptPath && scriptUrl) {
+      throw new Error("Cannot provide both scriptPath and scriptUrl. Use only one.");
+    }
+    
+    let scriptContent;
+    if (scriptPath) {
+      console.error("[MCP] Running script from local path:", scriptPath);
+      // Read the script file from local disk
+      scriptContent = await fs.readFile(scriptPath, "utf-8");
+    } else {
+      console.error("[MCP] Running script from URL:", scriptUrl);
+      // Fetch the script from remote URL
+      const https = require('https');
+      const http = require('http');
+      const url = require('url');
+      
+      scriptContent = await new Promise((resolve, reject) => {
+        const parsedUrl = url.parse(scriptUrl);
+        const client = parsedUrl.protocol === 'https:' ? https : http;
+        
+        client.get(scriptUrl, (res) => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`Failed to fetch script: HTTP ${res.statusCode}`));
+            return;
+          }
+          
+          let data = '';
+          res.on('data', (chunk) => data += chunk);
+          res.on('end', () => resolve(data));
+        }).on('error', reject);
+      });
+    }
 
     // Create an async function and execute it
     try {

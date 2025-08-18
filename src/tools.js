@@ -292,13 +292,17 @@ const toolDefinitions = [
   {
     name: "run_script",
     lite: true, // Essential for lite mode
-    description: "📁 Execute a JavaScript file from disk with access to browser automation. Use for complex automation scripts or reusable workflows.",
+    description: "📁 Execute a JavaScript file from local disk path or remote URL with access to browser automation. Use for complex automation scripts or reusable workflows. Must provide either scriptPath OR scriptUrl (not both).",
     inputSchema: {
       type: "object",
       properties: {
         scriptPath: {
           type: "string",
-          description: "Path to the JavaScript file (e.g., 'scripts/login-workflow.js')",
+          description: "Local disk path to the JavaScript file (e.g., 'scripts/login-workflow.js'). Cannot be used with scriptUrl.",
+        },
+        scriptUrl: {
+          type: "string",
+          description: "Remote URL to the JavaScript file (e.g., 'https://example.com/scripts/automation.js'). Cannot be used with scriptPath.",
         },
         args: {
           type: "object",
@@ -312,7 +316,6 @@ const toolDefinitions = [
           default: {},
         },
       },
-      required: ["scriptPath"],
     },
   },
   {
