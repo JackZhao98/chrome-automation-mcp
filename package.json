@@ -1,11 +1,11 @@
 {
   "name": "chrome-automation-mcp",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "MCP server for browser automation with custom scripts",
   "main": "index.js",
   "bin": {
     "chrome-automation-mcp": "./bin/cli.js",
-    "chrome-automation-mcp-lite": "./bin/cli-lite.js"
+    "chrome-automation-mcp-full": "./bin/cli-full.js"
   },
   "files": [
     "index.js",
@@ -16,8 +16,8 @@
   "scripts": {
     "start": "node bin/cli.js",
     "dev": "node bin/cli.js",
-    "lite": "node bin/cli-lite.js",
-    "start:lite": "node bin/cli-lite.js",
+    "full": "node bin/cli-full.js",
+    "start:full": "node bin/cli-full.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "engines": {
