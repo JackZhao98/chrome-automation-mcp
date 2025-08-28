@@ -27,7 +27,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "chrome-automation": {
-      "command": "chrome-automation-mcp"
+      "command": "chrome-automation-mcp-full"
     }
   }
 }
@@ -39,7 +39,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "chrome-automation": {
-      "command": "chrome-automation-mcp-lite"
+      "command": "chrome-automation-mcp"
     }
   }
 }
