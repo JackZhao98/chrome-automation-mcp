@@ -1133,6 +1133,184 @@ const toolHandlers = {
     }
   },
 
+  run_script_background: async function (args) {
+    const { scriptPath, scriptUrl, args: scriptArgs = {}, projectFolder } = args;
+
+    if (!this.browser || !this.page) {
+      throw new Error(
+        "Browser not connected. Use launch_browser or connect_browser first."
+      );
+    }
+    
+    // Validate that exactly one of scriptPath or scriptUrl is provided
+    if (!scriptPath && !scriptUrl) {
+      throw new Error("Either scriptPath or scriptUrl must be provided");
+    }
+    
+    if (scriptPath && scriptUrl) {
+      throw new Error("Cannot provide both scriptPath and scriptUrl. Use only one.");
+    }
+    
+    // Generate session ID if not exists
+    const sessionId = this.sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    
+    // Determine output folder
+    const outputDir = projectFolder || path.join('/tmp', sessionId);
+    
+    // Ensure output directory exists
+    try {
+      await fs.mkdir(outputDir, { recursive: true });
+    } catch (error) {
+      console.error(`[MCP] Failed to create output directory: ${error.message}`);
+      throw new Error(`Failed to create output directory: ${error.message}`);
+    }
+    
+    // Get script name for file naming
+    let scriptName = 'script';
+    if (scriptPath) {
+      scriptName = path.basename(scriptPath, path.extname(scriptPath));
+    } else if (scriptUrl) {
+      const urlParts = scriptUrl.split('/');
+      const fileName = urlParts[urlParts.length - 1];
+      scriptName = fileName.split('.')[0] || 'remote_script';
+    }
+    
+    // Generate timestamp
+    const timestamp = Date.now();
+    const outputFileName = `${scriptName}_script_output_${timestamp}.json`;
+    const logFileName = `${scriptName}_script_output_${timestamp}.log`;
+    const outputFilePath = path.join(outputDir, outputFileName);
+    const logFilePath = path.join(outputDir, logFileName);
+    
+    // Task info to return immediately
+    const taskInfo = {
+      sessionId,
+      scriptName,
+      scriptSource: scriptPath || scriptUrl,
+      startTime: new Date().toISOString(),
+      timestamp,
+      outputDir,
+      outputFile: outputFilePath,
+      logFile: logFilePath,
+      status: 'started'
+    };
+    
+    console.error("[MCP] Starting background script execution:", taskInfo);
+    
+    // Fetch script content
+    let scriptContent;
+    try {
+      if (scriptPath) {
+        console.error("[MCP] Reading script from local path:", scriptPath);
+        scriptContent = await fs.readFile(scriptPath, "utf-8");
+      } else {
+        console.error("[MCP] Fetching script from URL:", scriptUrl);
+        const https = require('https');
+        const http = require('http');
+        const url = require('url');
+        
+        scriptContent = await new Promise((resolve, reject) => {
+          const parsedUrl = url.parse(scriptUrl);
+          const client = parsedUrl.protocol === 'https:' ? https : http;
+          
+          client.get(scriptUrl, (res) => {
+            if (res.statusCode !== 200) {
+              reject(new Error(`Failed to fetch script: HTTP ${res.statusCode}`));
+              return;
+            }
+            
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => resolve(data));
+          }).on('error', reject);
+        });
+      }
+    } catch (error) {
+      const errorInfo = {
+        ...taskInfo,
+        status: 'failed',
+        error: error.message,
+        endTime: new Date().toISOString()
+      };
+      
+      // Write error to output file
+      await fs.writeFile(outputFilePath, JSON.stringify(errorInfo, null, 2));
+      await fs.writeFile(logFilePath, `Error fetching script: ${error.message}\n`);
+      
+      throw new Error(`Failed to fetch script: ${error.message}`);
+    }
+    
+    // Store browser and page references for background task
+    const browserRef = this.browser;
+    const pageRef = this.page;
+    const sessionIdRef = this.sessionId;
+    const sessionRegistryFileRef = this.sessionRegistryFile;
+    
+    // Create an async function and execute script
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const scriptFunction = new AsyncFunction("browser", "page", "args", scriptContent);
+    
+    // Execute script and setup completion handling
+    const executeScript = async () => {
+      let result = null;
+      let errorMessage = null;
+      
+      try {
+        // Log start
+        await fs.appendFile(logFilePath, `[${new Date().toISOString()}] Starting script execution\n`);
+        await fs.appendFile(logFilePath, `Script source: ${scriptPath || scriptUrl}\n`);
+        await fs.appendFile(logFilePath, `Session ID: ${sessionId}\n`);
+        await fs.appendFile(logFilePath, `Output directory: ${outputDir}\n`);
+        await fs.appendFile(logFilePath, "=" + "=".repeat(50) + "\n");
+        
+        // Execute the script
+        result = await scriptFunction(browserRef, pageRef, scriptArgs);
+        
+        await fs.appendFile(logFilePath, `\n[${new Date().toISOString()}] Script executed successfully\n`);
+        
+      } catch (error) {
+        errorMessage = error.message;
+        await fs.appendFile(logFilePath, `\n[${new Date().toISOString()}] Script execution failed: ${error.message}\n`);
+        await fs.appendFile(logFilePath, `Stack trace:\n${error.stack}\n`);
+      }
+      
+      return { result, errorMessage };
+    };
+    
+    // Handle script completion using Promise.then()
+    executeScript().then(async ({ result, errorMessage }) => {
+      console.error(`[MCP] Script execution completed, processing results...`);
+      
+      // Prepare final output
+      const finalOutput = {
+        ...taskInfo,
+        status: errorMessage ? 'failed' : 'completed',
+        endTime: new Date().toISOString(),
+        result: result !== undefined ? result : null,
+        error: errorMessage
+      };
+      
+      // Write final output to JSON file
+      await fs.writeFile(outputFilePath, JSON.stringify(finalOutput, null, 2));
+      console.error(`[MCP] Background script completed. Output saved to: ${outputFilePath}`);
+      
+      await fs.appendFile(logFilePath, `\n[${new Date().toISOString()}] Script execution completed. Browser remains open.\n`);
+    }).catch(async (error) => {
+      console.error(`[MCP] Script execution promise rejected: ${error.message}`);
+      await fs.appendFile(logFilePath, `[${new Date().toISOString()}] Script execution promise rejected: ${error.message}\n`);
+    });
+    
+    // Return immediately with task info
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(taskInfo, null, 2),
+        },
+      ],
+    };
+  },
+
   go_back: async function () {
     if (!this.page) {
       throw new Error(
@@ -2215,6 +2393,7 @@ const liteTools = [
   "close_all_browsers",
   "cleanup_sessions",
   "run_script",
+  "run_script_background",
   "set_storage",
 ];
 

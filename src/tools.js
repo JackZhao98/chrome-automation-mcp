@@ -319,6 +319,39 @@ const toolDefinitions = [
     },
   },
   {
+    name: "run_script_background",
+    lite: true, // Essential for lite mode
+    description: "📁 Execute a JavaScript file in the background with browser automation. Returns immediately with task info while script runs in background. Output is saved to files. Must provide either scriptPath OR scriptUrl (not both).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scriptPath: {
+          type: "string",
+          description: "Local disk path to the JavaScript file (e.g., 'scripts/login-workflow.js'). Cannot be used with scriptUrl.",
+        },
+        scriptUrl: {
+          type: "string",
+          description: "Remote URL to the JavaScript file (e.g., 'https://example.com/scripts/automation.js'). Cannot be used with scriptPath.",
+        },
+        args: {
+          type: "object",
+          description: "Arguments to pass to the script. Common: {query: 'search term', url: 'target.com'}",
+          properties: {
+            query: {
+              type: "string",
+              description: "Search query or input for the script",
+            },
+          },
+          default: {},
+        },
+        projectFolder: {
+          type: "string",
+          description: "Directory where output files will be saved. If not provided, defaults to /tmp/{session_id}",
+        },
+      },
+    },
+  },
+  {
     name: "evaluate",
     description: "🌐 Execute JavaScript code IN THE WEBPAGE (has access to document, window, DOM). Use for reading page data, checking elements, or simple DOM manipulation.",
     inputSchema: {
