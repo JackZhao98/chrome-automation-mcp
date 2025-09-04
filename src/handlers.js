@@ -3,6 +3,226 @@ const { spawn, exec } = require("child_process");
 const { promisify } = require("util");
 const fs = require("fs").promises;
 const path = require("path");
+
+// 智能浏览器关闭监控器
+async function startSmartBrowserCloser(
+  outputFilePath,
+  logFilePath,
+  sessionId,
+  browserRef,
+  sessionRegistryFile,
+  startTimestamp
+) {
+  const monitorStartTime = new Date().toISOString();
+  const maxWaitTime = 5 * 60 * 1000; // 5分钟超时
+  const checkInterval = 10 * 1000; // 每10秒检查一次
+
+  await fs.appendFile(
+    logFilePath,
+    `[${monitorStartTime}] [SMART-CLOSE] Starting intelligent browser closer monitor\n`
+  );
+  await fs.appendFile(
+    logFilePath,
+    `[${monitorStartTime}] [SMART-CLOSE] Waiting for valid output file: ${outputFilePath}\n`
+  );
+  await fs.appendFile(
+    logFilePath,
+    `[${monitorStartTime}] [SMART-CLOSE] Max wait time: ${maxWaitTime / 1000}s, Check interval: ${checkInterval / 1000}s\n`
+  );
+
+  let elapsedTime = 0;
+  let outputFileFound = false;
+
+  const monitor = setInterval(async () => {
+    try {
+      elapsedTime += checkInterval;
+      const checkTime = new Date().toISOString();
+
+      // 检查output文件是否存在且有效
+      if (require("fs").existsSync(outputFilePath)) {
+        try {
+          const outputContent = await fs.readFile(outputFilePath, "utf8");
+          const outputData = JSON.parse(outputContent);
+
+          // 验证文件内容有效性
+          if (outputData && outputData.status && outputData.endTime) {
+            outputFileFound = true;
+            await fs.appendFile(
+              logFilePath,
+              `[${checkTime}] [SMART-CLOSE] Valid output file detected after ${elapsedTime / 1000}s\n`
+            );
+            await fs.appendFile(
+              logFilePath,
+              `[${checkTime}] [SMART-CLOSE] Output status: ${outputData.status}\n`
+            );
+
+            clearInterval(monitor);
+            await performSmartBrowserClose(
+              logFilePath,
+              sessionId,
+              browserRef,
+              sessionRegistryFile,
+              startTimestamp,
+              "output_file_generated"
+            );
+            return;
+          }
+        } catch (parseError) {
+          await fs.appendFile(
+            logFilePath,
+            `[${checkTime}] [SMART-CLOSE] Output file exists but invalid: ${parseError.message}\n`
+          );
+        }
+      }
+
+      // 检查是否超时
+      if (elapsedTime >= maxWaitTime) {
+        await fs.appendFile(
+          logFilePath,
+          `[${checkTime}] [SMART-CLOSE] Timeout reached (${maxWaitTime / 1000}s), forcing browser closure\n`
+        );
+        clearInterval(monitor);
+        await performSmartBrowserClose(
+          logFilePath,
+          sessionId,
+          browserRef,
+          sessionRegistryFile,
+          startTimestamp,
+          "timeout_reached"
+        );
+        return;
+      }
+
+      // 定期状态报告
+      if (elapsedTime % 30000 === 0) {
+        // 每30秒报告一次
+        await fs.appendFile(
+          logFilePath,
+          `[${checkTime}] [SMART-CLOSE] Still waiting... Elapsed: ${elapsedTime / 1000}s/${maxWaitTime / 1000}s\n`
+        );
+      }
+    } catch (error) {
+      const errorTime = new Date().toISOString();
+      await fs.appendFile(
+        logFilePath,
+        `[${errorTime}] [SMART-CLOSE] Monitor error: ${error.message}\n`
+      );
+    }
+  }, checkInterval);
+}
+
+// 执行智能浏览器关闭
+async function performSmartBrowserClose(
+  logFilePath,
+  sessionId,
+  browserRef,
+  sessionRegistryFile,
+  startTimestamp,
+  reason
+) {
+  const closeStartTime = new Date().toISOString();
+  const scriptDuration = Date.now() - startTimestamp;
+
+  await fs.appendFile(
+    logFilePath,
+    `\n[${closeStartTime}] === SMART BROWSER CLOSE ===\n`
+  );
+  await fs.appendFile(
+    logFilePath,
+    `[${closeStartTime}] [SMART-CLOSE] Reason: ${reason}\n`
+  );
+  await fs.appendFile(
+    logFilePath,
+    `[${closeStartTime}] [SMART-CLOSE] Session: ${sessionId}\n`
+  );
+  await fs.appendFile(
+    logFilePath,
+    `[${closeStartTime}] [SMART-CLOSE] Total runtime: ${scriptDuration}ms\n`
+  );
+
+  let browserClosed = false;
+
+  try {
+    if (browserRef) {
+      // 检查浏览器状态
+      try {
+        const contexts = browserRef.contexts();
+        await fs.appendFile(
+          logFilePath,
+          `[${closeStartTime}] [SMART-CLOSE] Browser has ${contexts.length} context(s) before close\n`
+        );
+      } catch (stateError) {
+        await fs.appendFile(
+          logFilePath,
+          `[${closeStartTime}] [SMART-CLOSE] Browser state check failed: ${stateError.message}\n`
+        );
+      }
+
+      // 关闭浏览器
+      await browserRef.close();
+      await fs.appendFile(
+        logFilePath,
+        `[${new Date().toISOString()}] [SMART-CLOSE] Browser connection closed\n`
+      );
+
+      // 终止Chrome进程
+      const sessionRegistryPath =
+        sessionRegistryFile ||
+        "/tmp/chrome-browser-automation-sessions/sessions-registry.json";
+      if (sessionId && require("fs").existsSync(sessionRegistryPath)) {
+        const sessions = JSON.parse(
+          require("fs").readFileSync(sessionRegistryPath, "utf8")
+        );
+        if (sessions[sessionId] && sessions[sessionId].chromeProcessPid) {
+          const chromePid = sessions[sessionId].chromeProcessPid;
+
+          try {
+            process.kill(chromePid, "SIGTERM");
+            await fs.appendFile(
+              logFilePath,
+              `[${new Date().toISOString()}] [SMART-CLOSE] Sent SIGTERM to Chrome PID: ${chromePid}\n`
+            );
+
+            // 等待1秒后检查是否需要SIGKILL
+            setTimeout(() => {
+              try {
+                process.kill(chromePid, 0); // 检查进程是否还存在
+                process.kill(chromePid, "SIGKILL");
+                console.error(
+                  `[SMART-CLOSE] Force killed Chrome process ${chromePid}`
+                );
+              } catch (e) {
+                // 进程已经死了，正常
+              }
+            }, 1000);
+
+            browserClosed = true;
+          } catch (killError) {
+            await fs.appendFile(
+              logFilePath,
+              `[${new Date().toISOString()}] [SMART-CLOSE] Error killing Chrome process: ${killError.message}\n`
+            );
+          }
+        }
+      }
+    }
+  } catch (error) {
+    await fs.appendFile(
+      logFilePath,
+      `[${new Date().toISOString()}] [SMART-CLOSE] Error during browser close: ${error.message}\n`
+    );
+  }
+
+  const closeEndTime = new Date().toISOString();
+  await fs.appendFile(
+    logFilePath,
+    `[${closeEndTime}] [SMART-CLOSE] Browser closure completed. Success: ${browserClosed}\n`
+  );
+  await fs.appendFile(
+    logFilePath,
+    `[${closeEndTime}] === END SMART CLOSE ===\n`
+  );
+}
 const os = require("os");
 
 const execAsync = promisify(exec);
@@ -179,8 +399,8 @@ const toolHandlers = {
         platform === "darwin"
           ? `lsof -ti:${actualDebugPort}`
           : platform === "win32"
-          ? `netstat -ano | findstr :${actualDebugPort}`
-          : `lsof -ti:${actualDebugPort}`;
+            ? `netstat -ano | findstr :${actualDebugPort}`
+            : `lsof -ti:${actualDebugPort}`;
 
       await new Promise((resolve) => {
         exec(checkCmd, (error, stdout) => {
@@ -196,29 +416,41 @@ const toolHandlers = {
             );
 
             // 强制kill占用该端口的进程
+            const conflictTime = new Date().toISOString();
+            console.error(
+              `[CLOSE-CONFLICT] Port conflict detected at ${conflictTime} - killing ${pids.length} process(es) on port ${actualDebugPort}`
+            );
+
             pids.forEach((pid) => {
               try {
+                console.error(
+                  `[CLOSE-CONFLICT] Attempting to terminate conflicting process PID: ${pid.trim()}`
+                );
+
                 // 先尝试SIGTERM
+                const sigTermTime = new Date().toISOString();
                 process.kill(parseInt(pid.trim()), "SIGTERM");
                 console.error(
-                  `[MCP] Sent SIGTERM to process ${pid} on port ${actualDebugPort}`
+                  `[CLOSE-CONFLICT] Sent SIGTERM to process ${pid} on port ${actualDebugPort} at ${sigTermTime}`
                 );
 
                 // 如果SIGTERM不够，等待一秒后强制SIGKILL
                 setTimeout(() => {
                   try {
+                    const sigKillTime = new Date().toISOString();
                     process.kill(parseInt(pid.trim()), "SIGKILL");
                     console.error(
-                      `[MCP] Force killed process ${pid} on port ${actualDebugPort}`
+                      `[CLOSE-CONFLICT] Force killed process ${pid} on port ${actualDebugPort} at ${sigKillTime}`
                     );
                   } catch (e) {
-                    // Process already dead, ignore
+                    console.error(
+                      `[CLOSE-CONFLICT] Process ${pid} already dead during SIGKILL`
+                    );
                   }
                 }, 1000);
               } catch (e) {
                 console.error(
-                  `[MCP] Failed to terminate process ${pid}:`,
-                  e.message
+                  `[CLOSE-CONFLICT] Failed to terminate process ${pid}: ${e.message}`
                 );
               }
             });
@@ -241,8 +473,8 @@ const toolHandlers = {
       platform === "darwin"
         ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         : platform === "win32"
-        ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-        : "google-chrome";
+          ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+          : "google-chrome";
 
     const chromeArgs = [
       `--remote-debugging-port=${actualDebugPort}`,
@@ -358,8 +590,25 @@ const toolHandlers = {
 
           // 终止之前的Chrome进程
           if (this.chromeProcess && !this.chromeProcess.killed) {
+            const restartTime = new Date().toISOString();
+            const oldPid = this.chromeProcess.pid;
+            console.error(
+              `[CLOSE-RESTART] Terminating previous Chrome process PID: ${oldPid} at ${restartTime} (retry attempt ${attempt})`
+            );
+
             this.chromeProcess.kill("SIGTERM");
+            console.error(
+              `[CLOSE-RESTART] Sent SIGTERM to previous Chrome process ${oldPid}`
+            );
             await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            console.error(
+              `[CLOSE-RESTART] Previous Chrome process cleanup completed, proceeding with new launch`
+            );
+          } else {
+            console.error(
+              `[CLOSE-RESTART] No previous Chrome process to clean up (retry attempt ${attempt})`
+            );
           }
 
           // 用新端口重新启动Chrome
@@ -382,8 +631,8 @@ const toolHandlers = {
             platform === "darwin"
               ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
               : platform === "win32"
-              ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-              : "google-chrome";
+                ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+                : "google-chrome";
 
           this.chromeProcess = spawn(chromePath, chromeArgs, {
             detached: false,
@@ -409,9 +658,8 @@ const toolHandlers = {
     if (sessionId && sessionId !== "default") {
       console.error("[MCP] Connecting to browser by session ID:", sessionId);
       try {
-        const { browser, page, sessionInfo } = await getBrowserBySessionId(
-          sessionId
-        );
+        const { browser, page, sessionInfo } =
+          await getBrowserBySessionId(sessionId);
         this.browser = browser;
         this.page = page;
         this.debugPort = sessionInfo.debugPort;
@@ -1067,16 +1315,18 @@ const toolHandlers = {
         "Browser not connected. Use launch_browser or connect_browser first."
       );
     }
-    
+
     // Validate that exactly one of scriptPath or scriptUrl is provided
     if (!scriptPath && !scriptUrl) {
       throw new Error("Either scriptPath or scriptUrl must be provided");
     }
-    
+
     if (scriptPath && scriptUrl) {
-      throw new Error("Cannot provide both scriptPath and scriptUrl. Use only one.");
+      throw new Error(
+        "Cannot provide both scriptPath and scriptUrl. Use only one."
+      );
     }
-    
+
     let scriptContent;
     if (scriptPath) {
       console.error("[MCP] Running script from local path:", scriptPath);
@@ -1085,24 +1335,28 @@ const toolHandlers = {
     } else {
       console.error("[MCP] Running script from URL:", scriptUrl);
       // Fetch the script from remote URL
-      const https = require('https');
-      const http = require('http');
-      const url = require('url');
-      
+      const https = require("https");
+      const http = require("http");
+      const url = require("url");
+
       scriptContent = await new Promise((resolve, reject) => {
         const parsedUrl = url.parse(scriptUrl);
-        const client = parsedUrl.protocol === 'https:' ? https : http;
-        
-        client.get(scriptUrl, (res) => {
-          if (res.statusCode !== 200) {
-            reject(new Error(`Failed to fetch script: HTTP ${res.statusCode}`));
-            return;
-          }
-          
-          let data = '';
-          res.on('data', (chunk) => data += chunk);
-          res.on('end', () => resolve(data));
-        }).on('error', reject);
+        const client = parsedUrl.protocol === "https:" ? https : http;
+
+        client
+          .get(scriptUrl, (res) => {
+            if (res.statusCode !== 200) {
+              reject(
+                new Error(`Failed to fetch script: HTTP ${res.statusCode}`)
+              );
+              return;
+            }
+
+            let data = "";
+            res.on("data", (chunk) => (data += chunk));
+            res.on("end", () => resolve(data));
+          })
+          .on("error", reject);
       });
     }
 
@@ -1134,54 +1388,66 @@ const toolHandlers = {
   },
 
   run_script_background: async function (args) {
-    const { scriptPath, scriptUrl, args: scriptArgs = {}, projectFolder } = args;
+    const {
+      scriptPath,
+      scriptUrl,
+      args: scriptArgs = {},
+      projectFolder,
+      autoCloseBrowser = true,
+    } = args;
 
     if (!this.browser || !this.page) {
       throw new Error(
         "Browser not connected. Use launch_browser or connect_browser first."
       );
     }
-    
+
     // Validate that exactly one of scriptPath or scriptUrl is provided
     if (!scriptPath && !scriptUrl) {
       throw new Error("Either scriptPath or scriptUrl must be provided");
     }
-    
+
     if (scriptPath && scriptUrl) {
-      throw new Error("Cannot provide both scriptPath and scriptUrl. Use only one.");
+      throw new Error(
+        "Cannot provide both scriptPath and scriptUrl. Use only one."
+      );
     }
-    
-    // Generate session ID if not exists
-    const sessionId = this.sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    
+
+    // Use the current session ID
+    const sessionId =
+      this.sessionId ||
+      `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
     // Determine output folder
-    const outputDir = projectFolder || path.join('/tmp', sessionId);
-    
+    const outputDir = projectFolder || path.join("/tmp", sessionId);
+
     // Ensure output directory exists
     try {
       await fs.mkdir(outputDir, { recursive: true });
     } catch (error) {
-      console.error(`[MCP] Failed to create output directory: ${error.message}`);
+      console.error(
+        `[MCP] Failed to create output directory: ${error.message}`
+      );
       throw new Error(`Failed to create output directory: ${error.message}`);
     }
-    
+
     // Get script name for file naming
-    let scriptName = 'script';
+    let scriptName = "script";
     if (scriptPath) {
       scriptName = path.basename(scriptPath, path.extname(scriptPath));
     } else if (scriptUrl) {
-      const urlParts = scriptUrl.split('/');
+      const urlParts = scriptUrl.split("/");
       const fileName = urlParts[urlParts.length - 1];
-      scriptName = fileName.split('.')[0] || 'remote_script';
+      scriptName = fileName.split(".")[0] || "remote_script";
     }
-    
+
     // Generate timestamp
     const timestamp = Date.now();
     const outputFileName = `${scriptName}_script_output_${timestamp}.json`;
     const logFileName = `${scriptName}_script_output_${timestamp}.log`;
     const outputFilePath = path.join(outputDir, outputFileName);
     const logFilePath = path.join(outputDir, logFileName);
-    
+
     // Task info to return immediately
     const taskInfo = {
       sessionId,
@@ -1192,11 +1458,13 @@ const toolHandlers = {
       outputDir,
       outputFile: outputFilePath,
       logFile: logFilePath,
-      status: 'started'
+      status: "started",
+      autoCloseBrowser,
     };
-    
+
     console.error("[MCP] Starting background script execution:", taskInfo);
-    
+    console.error(`[MCP] autoCloseBrowser setting: ${autoCloseBrowser}`);
+
     // Fetch script content
     let scriptContent;
     try {
@@ -1205,101 +1473,464 @@ const toolHandlers = {
         scriptContent = await fs.readFile(scriptPath, "utf-8");
       } else {
         console.error("[MCP] Fetching script from URL:", scriptUrl);
-        const https = require('https');
-        const http = require('http');
-        const url = require('url');
-        
+        const https = require("https");
+        const http = require("http");
+        const url = require("url");
+
         scriptContent = await new Promise((resolve, reject) => {
           const parsedUrl = url.parse(scriptUrl);
-          const client = parsedUrl.protocol === 'https:' ? https : http;
-          
-          client.get(scriptUrl, (res) => {
-            if (res.statusCode !== 200) {
-              reject(new Error(`Failed to fetch script: HTTP ${res.statusCode}`));
-              return;
-            }
-            
-            let data = '';
-            res.on('data', (chunk) => data += chunk);
-            res.on('end', () => resolve(data));
-          }).on('error', reject);
+          const client = parsedUrl.protocol === "https:" ? https : http;
+
+          client
+            .get(scriptUrl, (res) => {
+              if (res.statusCode !== 200) {
+                reject(
+                  new Error(`Failed to fetch script: HTTP ${res.statusCode}`)
+                );
+                return;
+              }
+
+              let data = "";
+              res.on("data", (chunk) => (data += chunk));
+              res.on("end", () => resolve(data));
+            })
+            .on("error", reject);
         });
       }
     } catch (error) {
       const errorInfo = {
         ...taskInfo,
-        status: 'failed',
+        status: "failed",
         error: error.message,
-        endTime: new Date().toISOString()
+        endTime: new Date().toISOString(),
       };
-      
+
       // Write error to output file
       await fs.writeFile(outputFilePath, JSON.stringify(errorInfo, null, 2));
-      await fs.writeFile(logFilePath, `Error fetching script: ${error.message}\n`);
-      
+      await fs.writeFile(
+        logFilePath,
+        `Error fetching script: ${error.message}\n`
+      );
+
       throw new Error(`Failed to fetch script: ${error.message}`);
     }
-    
+
     // Store browser and page references for background task
     const browserRef = this.browser;
     const pageRef = this.page;
     const sessionIdRef = this.sessionId;
     const sessionRegistryFileRef = this.sessionRegistryFile;
+
+    // Create an async function with enhanced page handling
+    const AsyncFunction = Object.getPrototypeOf(
+      async function () {}
+    ).constructor;
+
+    // Wrap the script with page recovery logic
+    const enhancedScriptContent = `
+    // Enhanced page object with auto-recovery
+    const originalPage = page;
+    const enhancedPage = new Proxy(originalPage, {
+      get(target, prop) {
+        const value = target[prop];
+        if (typeof value === 'function') {
+          return function(...args) {
+            try {
+              return value.apply(target, args);
+            } catch (error) {
+              if (error.message.includes('Target page, context or browser has been closed')) {
+                console.error('[Script] Page context lost, attempting to get active page...');
+                // Try to get the currently active page
+                const contexts = browser.contexts();
+                if (contexts.length > 0) {
+                  const pages = contexts[0].pages();
+                  if (pages.length > 0) {
+                    const activePage = pages[pages.length - 1]; // Get the most recent page
+                    console.error('[Script] Found active page, retrying operation...');
+                    return value.apply(activePage, args);
+                  }
+                }
+              }
+              throw error;
+            }
+          };
+        }
+        return value;
+      }
+    });
     
-    // Create an async function and execute script
-    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-    const scriptFunction = new AsyncFunction("browser", "page", "args", scriptContent);
+    // Replace page reference in the script execution context
+    page = enhancedPage;
     
+    // Original script content
+    ${scriptContent}
+    `;
+
+    const scriptFunction = new AsyncFunction(
+      "browser",
+      "page",
+      "args",
+      enhancedScriptContent
+    );
+
     // Execute script and setup completion handling
     const executeScript = async () => {
       let result = null;
       let errorMessage = null;
-      
+
       try {
         // Log start
-        await fs.appendFile(logFilePath, `[${new Date().toISOString()}] Starting script execution\n`);
-        await fs.appendFile(logFilePath, `Script source: ${scriptPath || scriptUrl}\n`);
+        await fs.appendFile(
+          logFilePath,
+          `[${new Date().toISOString()}] Starting script execution\n`
+        );
+        await fs.appendFile(
+          logFilePath,
+          `Script source: ${scriptPath || scriptUrl}\n`
+        );
         await fs.appendFile(logFilePath, `Session ID: ${sessionId}\n`);
         await fs.appendFile(logFilePath, `Output directory: ${outputDir}\n`);
+
+        // Monitor external factors
+        try {
+          const { exec } = require("child_process");
+          const util = require("util");
+          const execAsync = util.promisify(exec);
+
+          // Check if there are other chrome processes running
+          const { stdout: chromeProcs } = await execAsync(
+            "pgrep -f chrome"
+          ).catch(() => ({ stdout: "" }));
+          const chromeCount = chromeProcs
+            ? chromeProcs
+                .trim()
+                .split("\n")
+                .filter((p) => p).length
+            : 0;
+          await fs.appendFile(
+            logFilePath,
+            `[${new Date().toISOString()}] System Chrome processes: ${chromeCount}\n`
+          );
+
+          // Check system resources
+          const { stdout: memInfo } = await execAsync(
+            "free -m | grep Mem | awk '{print $3 \"/\" $2}'"
+          ).catch(() => ({ stdout: "unknown" }));
+          await fs.appendFile(
+            logFilePath,
+            `[${new Date().toISOString()}] System memory usage: ${memInfo.trim()}\n`
+          );
+        } catch (sysError) {
+          await fs.appendFile(
+            logFilePath,
+            `[${new Date().toISOString()}] [CLOSE-EXTERNAL] Could not get system info: ${sysError.message}\n`
+          );
+        }
+
         await fs.appendFile(logFilePath, "=" + "=".repeat(50) + "\n");
-        
+
         // Execute the script
-        result = await scriptFunction(browserRef, pageRef, scriptArgs);
-        
-        await fs.appendFile(logFilePath, `\n[${new Date().toISOString()}] Script executed successfully\n`);
-        
+        console.error(
+          `[MCP] About to execute script function for session ${sessionId}...`
+        );
+        await fs.appendFile(
+          logFilePath,
+          `[${new Date().toISOString()}] About to execute script function\n`
+        );
+
+        try {
+          // Check if browser is still connected before executing
+          const contexts = browserRef.contexts();
+          console.error(
+            `[MCP] Browser has ${contexts.length} context(s) before script execution`
+          );
+          await fs.appendFile(
+            logFilePath,
+            `[${new Date().toISOString()}] Browser contexts before execution: ${contexts.length}\n`
+          );
+        } catch (checkError) {
+          console.error(
+            `[MCP] ERROR: Browser already disconnected before script execution: ${checkError.message}`
+          );
+          await fs.appendFile(
+            logFilePath,
+            `[${new Date().toISOString()}] ERROR: Browser disconnected before execution: ${checkError.message}\n`
+          );
+          throw new Error(
+            `Browser disconnected before script execution: ${checkError.message}`
+          );
+        }
+
+        // Add browser and page connection monitoring during script execution
+        let monitoringInterval;
+        const startMonitoring = () => {
+          monitoringInterval = setInterval(async () => {
+            try {
+              const contexts = browserRef.contexts(); // This will throw if browser is closed
+              await fs.appendFile(
+                logFilePath,
+                `[${new Date().toISOString()}] Monitor: Browser OK, ${contexts.length} context(s)\n`
+              );
+
+              // Check if page is still valid and detect page loss
+              try {
+                const currentUrl = pageRef.url(); // This will throw if page is closed/navigated
+                await fs.appendFile(
+                  logFilePath,
+                  `[${new Date().toISOString()}] Monitor: Page OK, URL: ${currentUrl}\n`
+                );
+              } catch (pageError) {
+                console.error(
+                  `[CLOSE-EXTERNAL] Page connection lost during script execution for session ${sessionId}: ${pageError.message}`
+                );
+                await fs.appendFile(
+                  logFilePath,
+                  `[${new Date().toISOString()}] [CLOSE-EXTERNAL] Page connection lost: ${pageError.message}\n`
+                );
+
+                // Check if any pages exist in contexts
+                for (let i = 0; i < contexts.length; i++) {
+                  const pages = contexts[i].pages();
+                  await fs.appendFile(
+                    logFilePath,
+                    `[${new Date().toISOString()}] [CLOSE-EXTERNAL] Context ${i} has ${pages.length} pages\n`
+                  );
+
+                  if (pages.length === 0) {
+                    await fs.appendFile(
+                      logFilePath,
+                      `[${new Date().toISOString()}] [CLOSE-EXTERNAL] WARNING: All pages closed externally - possible anti-automation or security measure\n`
+                    );
+                  } else {
+                    for (let j = 0; j < pages.length; j++) {
+                      try {
+                        const pageUrl = pages[j].url();
+                        await fs.appendFile(
+                          logFilePath,
+                          `[${new Date().toISOString()}] [CLOSE-EXTERNAL] Remaining page ${j}: ${pageUrl}\n`
+                        );
+                      } catch (e) {
+                        await fs.appendFile(
+                          logFilePath,
+                          `[${new Date().toISOString()}] [CLOSE-EXTERNAL] Page ${j} inaccessible: ${e.message}\n`
+                        );
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (error) {
+              console.error(
+                `[CLOSE-EXTERNAL] Browser connection lost during script execution for session ${sessionId}: ${error.message}`
+              );
+              await fs.appendFile(
+                logFilePath,
+                `[${new Date().toISOString()}] [CLOSE-EXTERNAL] Browser connection lost: ${error.message}\n`
+              );
+              if (monitoringInterval) {
+                clearInterval(monitoringInterval);
+                monitoringInterval = null;
+              }
+            }
+          }, 2000); // Check every 2 seconds (less aggressive)
+        };
+
+        const stopMonitoring = () => {
+          if (monitoringInterval) {
+            clearInterval(monitoringInterval);
+            monitoringInterval = null;
+          }
+        };
+
+        try {
+          startMonitoring();
+          result = await scriptFunction(browserRef, pageRef, scriptArgs);
+          stopMonitoring();
+        } catch (scriptError) {
+          stopMonitoring();
+
+          // Check if it's a page context error and try to diagnose
+          if (
+            scriptError.message.includes(
+              "Target page, context or browser has been closed"
+            )
+          ) {
+            await fs.appendFile(
+              logFilePath,
+              `[${new Date().toISOString()}] [CLOSE-EXTERNAL] CRITICAL: Page/browser closed during script execution\n`
+            );
+
+            try {
+              // Check if browser is still alive
+              const contexts = browserRef.contexts();
+              await fs.appendFile(
+                logFilePath,
+                `[${new Date().toISOString()}] Browser still has ${contexts.length} context(s) after page error\n`
+              );
+
+              // Check if we can get a new page
+              if (contexts.length > 0) {
+                const pages = contexts[0].pages();
+                await fs.appendFile(
+                  logFilePath,
+                  `[${new Date().toISOString()}] Context has ${pages.length} page(s)\n`
+                );
+
+                if (pages.length === 0) {
+                  await fs.appendFile(
+                    logFilePath,
+                    `[${new Date().toISOString()}] [CLOSE-EXTERNAL] CONFIRMED: All pages closed externally while browser remains active\n`
+                  );
+                  await fs.appendFile(
+                    logFilePath,
+                    `[${new Date().toISOString()}] [CLOSE-EXTERNAL] This indicates external closure (anti-automation, security policy, etc.)\n`
+                  );
+                  await fs.appendFile(
+                    logFilePath,
+                    `[${new Date().toISOString()}] [CLOSE-EXTERNAL] Browser will be closed due to page loss, not script completion\n`
+                  );
+                } else {
+                  for (let i = 0; i < pages.length; i++) {
+                    try {
+                      const newUrl = pages[i].url();
+                      await fs.appendFile(
+                        logFilePath,
+                        `[${new Date().toISOString()}] Remaining page ${i} URL: ${newUrl}\n`
+                      );
+                    } catch (pageUrlError) {
+                      await fs.appendFile(
+                        logFilePath,
+                        `[${new Date().toISOString()}] Page ${i} URL inaccessible: ${pageUrlError.message}\n`
+                      );
+                    }
+                  }
+                }
+              } else {
+                await fs.appendFile(
+                  logFilePath,
+                  `[${new Date().toISOString()}] [CLOSE-EXTERNAL] CONFIRMED: No contexts remain - complete external closure\n`
+                );
+              }
+            } catch (diagError) {
+              await fs.appendFile(
+                logFilePath,
+                `[${new Date().toISOString()}] [CLOSE-EXTERNAL] Browser diagnosis failed: ${diagError.message}\n`
+              );
+              await fs.appendFile(
+                logFilePath,
+                `[${new Date().toISOString()}] [CLOSE-EXTERNAL] This confirms browser was closed externally\n`
+              );
+            }
+          }
+
+          throw scriptError;
+        }
+        console.error(
+          `[MCP] Script function completed successfully for session ${sessionId}`
+        );
+
+        await fs.appendFile(
+          logFilePath,
+          `\n[${new Date().toISOString()}] Script executed successfully\n`
+        );
       } catch (error) {
         errorMessage = error.message;
-        await fs.appendFile(logFilePath, `\n[${new Date().toISOString()}] Script execution failed: ${error.message}\n`);
+        console.error(
+          `[MCP] Script execution failed for session ${sessionId}: ${error.message}`
+        );
+        await fs.appendFile(
+          logFilePath,
+          `\n[${new Date().toISOString()}] Script execution failed: ${error.message}\n`
+        );
         await fs.appendFile(logFilePath, `Stack trace:\n${error.stack}\n`);
+
+        // Try to diagnose why browser was closed
+        try {
+          browserRef.contexts();
+          await fs.appendFile(
+            logFilePath,
+            `[${new Date().toISOString()}] Browser is still connected after error\n`
+          );
+        } catch (browserCheckError) {
+          await fs.appendFile(
+            logFilePath,
+            `[${new Date().toISOString()}] Browser is disconnected after error: ${browserCheckError.message}\n`
+          );
+        }
       }
-      
+
       return { result, errorMessage };
     };
-    
+
     // Handle script completion using Promise.then()
-    executeScript().then(async ({ result, errorMessage }) => {
-      console.error(`[MCP] Script execution completed, processing results...`);
-      
-      // Prepare final output
-      const finalOutput = {
-        ...taskInfo,
-        status: errorMessage ? 'failed' : 'completed',
-        endTime: new Date().toISOString(),
-        result: result !== undefined ? result : null,
-        error: errorMessage
-      };
-      
-      // Write final output to JSON file
-      await fs.writeFile(outputFilePath, JSON.stringify(finalOutput, null, 2));
-      console.error(`[MCP] Background script completed. Output saved to: ${outputFilePath}`);
-      
-      await fs.appendFile(logFilePath, `\n[${new Date().toISOString()}] Script execution completed. Browser remains open.\n`);
-    }).catch(async (error) => {
-      console.error(`[MCP] Script execution promise rejected: ${error.message}`);
-      await fs.appendFile(logFilePath, `[${new Date().toISOString()}] Script execution promise rejected: ${error.message}\n`);
-    });
-    
+    executeScript()
+      .then(async ({ result, errorMessage }) => {
+        console.error(
+          `[MCP] Script execution completed, processing results...`
+        );
+
+        // Prepare final output
+        const finalOutput = {
+          ...taskInfo,
+          status: errorMessage ? "failed" : "completed",
+          endTime: new Date().toISOString(),
+          result: result !== undefined ? result : null,
+          error: errorMessage,
+        };
+
+        // Write final output to JSON file
+        await fs.writeFile(
+          outputFilePath,
+          JSON.stringify(finalOutput, null, 2)
+        );
+        console.error(
+          `[MCP] Background script completed. Output saved to: ${outputFilePath}`
+        );
+
+        // 简化的日志记录，现在启动智能关闭监控
+        await fs.appendFile(
+          logFilePath,
+          `\n[${new Date().toISOString()}] Script execution completed. Output file generated: ${outputFilePath}\n`
+        );
+
+        // 启动智能关闭监控（基于output文件存在性）
+        if (autoCloseBrowser) {
+          startSmartBrowserCloser(
+            outputFilePath,
+            logFilePath,
+            sessionIdRef,
+            browserRef,
+            sessionRegistryFileRef,
+            timestamp
+          );
+        }
+      })
+      .catch(async (error) => {
+        console.error(
+          `[MCP] Script execution promise rejected: ${error.message}`
+        );
+        await fs.appendFile(
+          logFilePath,
+          `[${new Date().toISOString()}] Script execution promise rejected: ${error.message}\n`
+        );
+
+        // 即使脚本失败，也要启动智能关闭监控（但会超时关闭）
+        if (autoCloseBrowser) {
+          await fs.appendFile(
+            logFilePath,
+            `[${new Date().toISOString()}] Starting smart closer due to script failure\n`
+          );
+          startSmartBrowserCloser(
+            outputFilePath,
+            logFilePath,
+            sessionIdRef,
+            browserRef,
+            sessionRegistryFileRef,
+            timestamp
+          );
+        }
+      });
+
     // Return immediately with task info
     return {
       content: [
@@ -1379,10 +2010,10 @@ const toolHandlers = {
               result === undefined
                 ? "undefined"
                 : result === null
-                ? "null"
-                : typeof result === "string"
-                ? result
-                : JSON.stringify(result, null, 2),
+                  ? "null"
+                  : typeof result === "string"
+                    ? result
+                    : JSON.stringify(result, null, 2),
           },
         ],
       };
@@ -1489,15 +2120,1313 @@ const toolHandlers = {
     };
   },
 
+  get_login: async function (args = {}) {
+    const {
+      url,
+      waitMessage = "Please complete your login, then click 'Finish Connect'",
+      autoClose = true,
+      saveToFile = false,
+    } = args;
+
+    if (!url) {
+      throw new Error("URL is required for login capture");
+    }
+
+    console.error(`[MCP] Starting interactive login capture for: ${url}`);
+
+    try {
+      // 启动浏览器（如果还没有）
+      if (!this.browser || !this.page) {
+        console.error("[MCP] No browser available, launching new browser...");
+        await this.launch_browser({});
+      }
+
+      // 导航到登录页面
+      console.error(`[MCP] Navigating to login URL: ${url}`);
+      await this.page.goto(url, { waitUntil: "networkidle" });
+
+      // 生成文件路径函数
+      this.generateFilePath = (url) => {
+        const fs = require("fs");
+        const path = require("path");
+        const os = require("os");
+
+        // 创建临时目录
+        const tmpDir = path.join(os.tmpdir(), "mcp-browser-auth");
+        if (!fs.existsSync(tmpDir)) {
+          fs.mkdirSync(tmpDir, { recursive: true });
+        }
+
+        // 生成文件名
+        const domain = new URL(url).hostname.replace(/\./g, "_");
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const filename = `${domain}_${timestamp}.json`;
+        return path.join(tmpDir, filename);
+      };
+
+      // 定义按钮注入函数（可重复调用）
+      const injectLoginButton = async () => {
+        try {
+          console.error("[MCP] Injecting login button...");
+
+          // 注入 CSS 样式（每次都重新注入确保样式存在）
+          await this.page.addStyleTag({
+            content: `
+              /* 高特异性选择器覆盖所有样式 */
+              button#mcp-finish-connect-btn,
+              #mcp-finish-connect-btn,
+              [id="mcp-finish-connect-btn"] {
+                /* 重置所有继承样式 */
+                all: unset !important;
+                
+                /* 核心定位和显示 */
+                position: fixed !important;
+                top: 40px !important;
+                right: 20px !important;
+                z-index: 999999 !important;
+                display: inline-block !important;
+                box-sizing: border-box !important;
+                
+                /* 视觉外观 */
+                background: linear-gradient(135deg, #3d9040 0%, #2d7030 100%) !important;
+                color: white !important;
+                border: 1px solid rgba(255, 255, 255, 0.2) !important;
+                border-radius: 25px !important;
+                padding: 12px 24px !important;
+                
+                /* 字体样式 */
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+                font-size: 14px !important;
+                font-weight: 600 !important;
+                line-height: 1.2 !important;
+                text-align: center !important;
+                text-decoration: none !important;
+                text-overflow: visible !important;
+                white-space: nowrap !important;
+                
+                /* 交互性 */
+                cursor: pointer !important;
+                user-select: none !important;
+                outline: none !important;
+                outline-offset: 0 !important;
+                
+                /* 效果 */
+                box-shadow: 0 4px 15px rgba(61, 144, 64, 0.3) !important;
+                backdrop-filter: blur(10px) !important;
+                -webkit-backdrop-filter: blur(10px) !important;
+                transition: all 0.3s ease !important;
+                
+                /* 重置常见覆盖 */
+                width: auto !important;
+                height: auto !important;
+                min-width: auto !important;
+                min-height: auto !important;
+                max-width: none !important;
+                max-height: none !important;
+                margin: 0 !important;
+                vertical-align: baseline !important;
+                text-transform: none !important;
+                letter-spacing: normal !important;
+                word-spacing: normal !important;
+                opacity: 1 !important;
+                visibility: visible !important;
+                overflow: visible !important;
+                
+                /* 重置 flex/grid */
+                flex: none !important;
+                grid-area: auto !important;
+                align-self: auto !important;
+                justify-self: auto !important;
+              }
+              
+              button#mcp-finish-connect-btn:hover,
+              #mcp-finish-connect-btn:hover,
+              [id="mcp-finish-connect-btn"]:hover {
+                transform: translateY(-2px) !important;
+                box-shadow: 0 6px 20px rgba(61, 144, 64, 0.4) !important;
+                background: linear-gradient(135deg, #4da050 0%, #3d9040 100%) !important;
+                color: white !important;
+              }
+              
+              button#mcp-finish-connect-btn:active,
+              #mcp-finish-connect-btn:active,
+              [id="mcp-finish-connect-btn"]:active {
+                transform: translateY(0) !important;
+                box-shadow: 0 2px 10px rgba(61, 144, 64, 0.3) !important;
+                background: linear-gradient(135deg, #3d9040 0%, #2d7030 100%) !important;
+                color: white !important;
+              }
+              
+              button#mcp-finish-connect-btn:focus,
+              #mcp-finish-connect-btn:focus,
+              [id="mcp-finish-connect-btn"]:focus {
+                outline: 2px solid rgba(61, 144, 64, 0.5) !important;
+                outline-offset: 2px !important;
+                background: linear-gradient(135deg, #4da050 0%, #3d9040 100%) !important;
+                color: white !important;
+              }
+              
+              button#mcp-finish-connect-btn:before,
+              #mcp-finish-connect-btn:before,
+              [id="mcp-finish-connect-btn"]:before {
+                content: '✓' !important;
+                margin-right: 8px !important;
+                font-size: 16px !important;
+                font-weight: bold !important;
+                color: white !important;
+                display: inline !important;
+              }
+            `,
+          });
+
+          // 注入按钮 HTML 和事件处理
+          await this.page.evaluate((saveToFileFlag) => {
+            // 设置全局变量
+            window.mcpSaveToFile = saveToFileFlag;
+
+            // 移除现有按钮和监听器
+            const existingBtn = document.getElementById(
+              "mcp-finish-connect-btn"
+            );
+            if (existingBtn) {
+              existingBtn.remove();
+            }
+
+            // 移除现有事件监听器
+            const existingListeners = window.mcpCloseListeners;
+            if (existingListeners && Array.isArray(existingListeners)) {
+              existingListeners.forEach((listener) => {
+                window.removeEventListener("mcp-connect-close", listener);
+              });
+            }
+
+            // 创建按钮
+            console.log("[MCP] Creating button element...");
+            const button = document.createElement("button");
+            button.id = "mcp-finish-connect-btn";
+            button.textContent = saveToFileFlag
+              ? "Once logged in, tap here to connect & save"
+              : "Once logged in, tap here to connect";
+            button.title = "Save connection and close this window";
+            console.log("[MCP] Button element created:", button.id);
+
+            // 创建事件处理器
+            const clickHandler = () => {
+              console.log(
+                "[MCP] Button clicked - starting authentication capture..."
+              );
+
+              // 添加加载状态
+              button.textContent = "Connecting...";
+              button.style.opacity = "0.7";
+              button.style.cursor = "not-allowed";
+
+              // 移除点击监听器防止多次点击
+              button.removeEventListener("click", clickHandler);
+
+              console.log("[MCP] Button state updated to connecting...");
+
+              // 如果是saveToFile模式，调用特殊的下载处理器
+              if (window.mcpSaveToFile && window.mcpHandleButtonClick) {
+                console.log("[MCP] Calling file save handler...");
+                window.mcpHandleButtonClick();
+
+                // 更新按钮状态
+                setTimeout(() => {
+                  button.textContent = "✅ Download triggered!";
+                  button.style.background =
+                    "linear-gradient(135deg, #00CC00 0%, #009900 100%)";
+                }, 100);
+
+                return; // 不执行后续的普通处理
+              }
+
+              // 收集认证数据（普通模式）
+              try {
+                // 获取所有存储数据
+                const storageData = {
+                  url: window.location.href,
+                  domain: window.location.hostname,
+                  timestamp: new Date().toISOString(),
+                  cookies: document.cookie,
+                  localStorage: {},
+                  sessionStorage: {},
+                };
+
+                // 收集 localStorage
+                try {
+                  for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key)
+                      storageData.localStorage[key] = localStorage.getItem(key);
+                  }
+                } catch (e) {
+                  storageData.localStorageError = e.message;
+                }
+
+                // 收集 sessionStorage
+                try {
+                  for (let i = 0; i < sessionStorage.length; i++) {
+                    const key = sessionStorage.key(i);
+                    if (key)
+                      storageData.sessionStorage[key] =
+                        sessionStorage.getItem(key);
+                  }
+                } catch (e) {
+                  storageData.sessionStorageError = e.message;
+                }
+
+                // 保存到全局变量，供主进程读取
+                window.mcpCapturedData = {
+                  ...storageData,
+                  captureInfo: {
+                    tool: "get_login",
+                    version: "1.0",
+                    savedAt: new Date().toISOString(),
+                    filePath: window.mcpFilePath || null, // 使用预设的文件路径
+                    saveToFile: window.mcpSaveToFile,
+                  },
+                };
+
+                console.log(
+                  "[MCP] Data captured, saveToFile=" + window.mcpSaveToFile
+                );
+              } catch (error) {
+                console.error("[MCP] Error capturing data:", error);
+                window.mcpCaptureError = error.message;
+              }
+
+              // 发送消息到主进程
+              window.dispatchEvent(new CustomEvent("mcp-connect-close"));
+
+              // 更新按钮状态为成功
+              setTimeout(() => {
+                button.textContent = "✅ Data captured!";
+                button.style.opacity = "0.8";
+                button.style.cursor = "default";
+                button.style.background =
+                  "linear-gradient(135deg, #00CC00 0%, #009900 100%)";
+
+                console.log("[MCP] Button state updated to success");
+
+                // 3秒后淡出按钮
+                setTimeout(() => {
+                  button.style.opacity = "0";
+                  button.style.transform = "translateY(-10px)";
+                  setTimeout(() => {
+                    if (button.parentNode) {
+                      button.parentNode.removeChild(button);
+                    }
+                  }, 500);
+                }, 3000);
+              }, 100);
+            };
+
+            // 添加点击处理器
+            button.addEventListener("click", clickHandler);
+
+            // 添加到页面
+            console.log("[MCP] Appending button to page...");
+            document.body.appendChild(button);
+            console.log("[MCP] Button appended to page");
+
+            // 添加淡入动画
+            setTimeout(() => {
+              button.style.opacity = "1";
+            }, 100);
+
+            // 创建关闭事件监听器
+            const closeListener = () => {
+              console.log("Connect and close requested");
+              window.mcpLoginFinished = true;
+            };
+
+            // 跟踪监听器
+            window.mcpCloseListeners = [
+              window.mcpCloseListeners || [],
+              closeListener,
+            ].flat();
+
+            // 监听自定义事件
+            window.addEventListener("mcp-connect-close", closeListener);
+          }, saveToFile);
+
+          console.error("[MCP] ✅ Login button injected successfully!");
+          return true;
+        } catch (error) {
+          console.error("[MCP] ❌ Button injection failed:", error.message);
+          return false;
+        }
+      };
+
+      // 首次注入按钮
+      try {
+        await injectLoginButton();
+        console.error("[MCP] saveToFile parameter:", saveToFile);
+      } catch (injectionError) {
+        console.error(
+          `[MCP] Button injection failed: ${injectionError.message}`
+        );
+        console.error(
+          `[MCP] WARNING: Could not inject interactive UI due to page security restrictions (CSP)`
+        );
+        console.error(`[MCP] FALLBACK MODE: Manual login required`);
+        console.error(`[MCP] Browser URL: ${this.page.url()}`);
+        console.error(
+          `[MCP] Please complete login in browser, then use 'get_storage' tool to capture auth data`
+        );
+
+        // 备用方案：提供清晰指导
+        return {
+          content: [
+            {
+              type: "text",
+              text: `# ⚠️ 手动登录模式 (CSP 限制回退)
+
+## 🚫 问题说明
+该网站的内容安全策略 (CSP) 阻止了交互式 UI 注入。这是网站的安全保护机制。
+
+## 📋 手动操作步骤
+### 步骤 1: 完成登录
+- **当前浏览器已打开**: ${this.page.url()}
+- **请在浏览器中完成登录** (输入用户名密码等)
+- **确保登录状态生效** (能看到已登录的用户界面)
+
+### 步骤 2: 捕获认证数据  
+**登录完成后，运行此命令获取认证数据:**
+\`\`\`
+get_storage sessionId="default"
+\`\`\`
+
+## 🔧 自动化使用
+获取到认证数据后，可以使用 \`set_storage\` 工具在自动化脚本中恢复登录状态:
+\`\`\`
+set_storage cookies=[...] localStorage={...} domain="${new URL(this.page.url()).hostname}"
+\`\`\`
+
+## 📊 当前状态
+- ✅ **浏览器**: 已启动并保持打开
+- ✅ **页面**: ${this.page.url()}
+- ⏳ **等待**: 用户手动完成登录
+- 🎯 **下一步**: 登录后使用 \`get_storage\` 捕获数据
+
+**提示**: 这种回退模式确保即使在最严格的网站安全设置下也能完成认证捕获。`,
+            },
+          ],
+        };
+      }
+
+      // 成功注入，继续正常流程
+      console.error(
+        `[MCP] ✅ Interactive login UI injected successfully using proven strategy!`
+      );
+      console.error(`[MCP] 📝 Instructions: ${waitMessage}`);
+      console.error(
+        `[MCP] 👀 Look for the blue 'Finish Connect' button in the top-right corner of the browser`
+      );
+      console.error(
+        `[MCP] 🔄 Button will persist through page redirects automatically`
+      );
+      console.error(
+        `[MCP] ⏰ Waiting for user interaction (timeout: 10 minutes)...`
+      );
+
+      // 启动定期检查机制，确保按钮始终可见
+      const buttonCheckInterval = setInterval(async () => {
+        try {
+          const buttonStatus = await this.page.evaluate(() => {
+            const btn = document.getElementById("mcp-finish-connect-btn");
+            return {
+              exists: !!btn,
+              visible: btn && btn.offsetParent !== null,
+              clicked: window.mcpLoginFinished === true,
+            };
+          });
+
+          // 如果用户已点击完成，停止检查
+          if (buttonStatus.clicked) {
+            clearInterval(buttonCheckInterval);
+            return;
+          }
+
+          // 如果按钮丢失或不可见，重新注入
+          if (!buttonStatus.exists || !buttonStatus.visible) {
+            console.error(`[MCP] Button missing or hidden, re-injecting...`);
+            const reinjected = await injectLoginButton();
+            if (reinjected) {
+              console.error(`[MCP] ✅ Button successfully re-injected`);
+            } else {
+              console.error(`[MCP] ⚠️ Failed to re-inject button`);
+            }
+          }
+        } catch (error) {
+          console.error(`[MCP] Error during button check: ${error.message}`);
+        }
+      }, 3000); // 每3秒检查一次
+
+      // 清理定时器的函数
+      const cleanupInterval = () => {
+        clearInterval(buttonCheckInterval);
+        console.error(`[MCP] Button monitoring stopped`);
+      };
+
+      // 根据saveToFile参数决定工作流程
+      if (saveToFile) {
+        // saveToFile=true：立即返回文件路径，不等待用户操作
+        const filePath = this.generateFilePath(url);
+
+        console.error(`[MCP] 💾 File save mode activated`);
+        console.error(`[MCP] 📁 File will be saved to: ${filePath}`);
+
+        // 在页面中设置保存逻辑
+        await this.page.evaluate((targetPath) => {
+          window.mcpFilePath = targetPath;
+          console.log("[MCP] File path set for save:", targetPath);
+
+          // 重写按钮点击事件，添加下载逻辑
+          window.mcpHandleButtonClick = async () => {
+            console.log("[MCP] Button click handler triggered");
+
+            try {
+              // 收集认证数据
+              const storageData = {
+                url: window.location.href,
+                domain: window.location.hostname,
+                timestamp: new Date().toISOString(),
+                cookies: document.cookie,
+                localStorage: {},
+                sessionStorage: {},
+              };
+
+              // 收集 localStorage
+              try {
+                for (let i = 0; i < localStorage.length; i++) {
+                  const key = localStorage.key(i);
+                  if (key)
+                    storageData.localStorage[key] = localStorage.getItem(key);
+                }
+              } catch (e) {
+                storageData.localStorageError = e.message;
+              }
+
+              // 收集 sessionStorage
+              try {
+                for (let i = 0; i < sessionStorage.length; i++) {
+                  const key = sessionStorage.key(i);
+                  if (key)
+                    storageData.sessionStorage[key] =
+                      sessionStorage.getItem(key);
+                }
+              } catch (e) {
+                storageData.sessionStorageError = e.message;
+              }
+
+              // 创建下载
+              const jsonContent = JSON.stringify(storageData, null, 2);
+              const blob = new Blob([jsonContent], { type: "text/plain" });
+              const url = URL.createObjectURL(blob);
+              const link = document.createElement("a");
+              link.href = url;
+              link.download = targetPath.split("/").pop(); // 使用文件名部分
+              document.body.appendChild(link);
+              link.click();
+
+              // 清理
+              setTimeout(() => {
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+              }, 100);
+
+              console.log("[MCP] Download triggered for:", targetPath);
+
+              // 标记完成
+              window.mcpDownloadTriggered = true;
+            } catch (error) {
+              console.error("[MCP] Error in button click handler:", error);
+              window.mcpDownloadError = error.message;
+            }
+          };
+
+          console.log("[MCP] Button click handler configured for file save");
+        }, filePath);
+
+        // 设置下载监听器（在后台处理文件保存）
+        this.page.on("download", async (download) => {
+          try {
+            console.error(
+              `[MCP] 📥 Download detected: ${download.suggestedFilename()}`
+            );
+            await download.saveAs(filePath);
+            console.error(`[MCP] ✅ File saved to: ${filePath}`);
+          } catch (error) {
+            console.error(`[MCP] ❌ Failed to save download: ${error.message}`);
+          }
+        });
+
+        // 立即返回文件路径信息
+        return {
+          content: [
+            {
+              type: "text",
+              text: `# 📁 认证捕获文件模式
+
+## 文件信息
+- **保存路径**: \`${filePath}\`
+- **状态**: 等待用户操作
+
+## 操作说明
+1. 在打开的浏览器中完成登录
+2. 点击右上角的 "Once logged in, tap here to connect & save" 按钮
+3. 文件将自动下载并保存到指定路径
+
+## 注意事项
+- 浏览器将保持打开状态
+- 完成操作后可手动关闭浏览器
+- 如果下载失败，请检查浏览器控制台日志
+
+**提示**: 请在浏览器中完成您的登录操作！`,
+            },
+          ],
+        };
+      } else {
+        // saveToFile=false：等待用户手动点击按钮
+        console.error(
+          `[MCP] 👆 Manual mode: Waiting for user to click 'Finish Connect' button`
+        );
+      }
+
+      // 只有saveToFile=false时才等待用户点击
+      if (!saveToFile) {
+        const startWaitTime = Date.now();
+        try {
+          await this.page.waitForFunction(
+            () => {
+              const finished = window.mcpLoginFinished === true;
+              if (finished) {
+                console.log("[MCP] mcpLoginFinished detected as true");
+              }
+              return finished;
+            },
+            {
+              timeout: 10 * 60 * 1000, // 10分钟超时
+            }
+          );
+
+          console.error(
+            `[MCP] ✅ User click detected, processing data and file save...`
+          );
+
+          // 用户点击了完成，清理定时器
+          cleanupInterval();
+        } catch (waitError) {
+          // 超时或错误，清理定时器
+          cleanupInterval();
+
+          if (waitError.message.includes("Timeout")) {
+            console.error(`[MCP] Login timeout after 10 minutes`);
+            throw new Error(
+              'Login timeout: Please complete login and click "Finish Connect" within 10 minutes'
+            );
+          }
+          throw waitError;
+        }
+
+        const waitDuration = Date.now() - startWaitTime;
+        console.error(
+          `[MCP] User completed login after ${Math.round(waitDuration / 1000)}s`
+        );
+
+        // 检查是否需要保存文件
+        console.error(`[MCP] 🔍 Checking captured data...`);
+        const capturedData = await this.page.evaluate(() => {
+          const data = window.mcpCapturedData || null;
+          if (data) {
+            console.log("[MCP] Found captured data:", {
+              domain: data.domain,
+              saveToFile: data.captureInfo
+                ? data.captureInfo.saveToFile
+                : "no captureInfo",
+              filePath: data.captureInfo
+                ? data.captureInfo.filePath
+                : "no path",
+            });
+          } else {
+            console.log(
+              "[MCP] No captured data found in window.mcpCapturedData"
+            );
+          }
+          return data;
+        });
+
+        let savedFilePath = null;
+        console.error(`[MCP] 🔍 capturedData exists: ${!!capturedData}`);
+        if (capturedData) {
+          console.error(
+            `[MCP] 🔍 captureInfo exists: ${!!capturedData.captureInfo}`
+          );
+          if (capturedData.captureInfo) {
+            console.error(
+              `[MCP] 🔍 saveToFile: ${capturedData.captureInfo.saveToFile}`
+            );
+            console.error(
+              `[MCP] 🔍 filePath: ${capturedData.captureInfo.filePath}`
+            );
+          }
+        }
+
+        if (
+          capturedData &&
+          capturedData.captureInfo &&
+          capturedData.captureInfo.saveToFile
+        ) {
+          try {
+            // 获取完整的cookies
+            const context = this.page.context();
+            const browserCookies = await context.cookies();
+
+            // 合并数据
+            const completeData = {
+              ...capturedData,
+              cookies: browserCookies.map((cookie) => ({
+                name: cookie.name,
+                value: cookie.value,
+                domain: cookie.domain,
+                path: cookie.path,
+                expires: cookie.expires,
+                httpOnly: cookie.httpOnly,
+                secure: cookie.secure,
+                sameSite: cookie.sameSite,
+              })),
+              cookieString: capturedData.cookies, // 保留原始cookie字符串
+            };
+
+            // 使用标准的blob下载方式保存文件
+            const filePath = capturedData.captureInfo.filePath;
+            if (filePath) {
+              console.error(`[MCP] 📥 Starting file save process...`);
+              console.error(`[MCP] 📁 Target file path: ${filePath}`);
+
+              // 打印数据统计
+              const cookieCount = completeData.cookies
+                ? completeData.cookies.length
+                : 0;
+              const localStorageCount = Object.keys(
+                completeData.localStorage || {}
+              ).length;
+              const sessionStorageCount = Object.keys(
+                completeData.sessionStorage || {}
+              ).length;
+
+              console.error(
+                `[MCP] 📊 Data: ${cookieCount} cookies, ${localStorageCount} localStorage, ${sessionStorageCount} sessionStorage`
+              );
+
+              try {
+                // 设置简单的下载监听器
+                console.error(`[MCP] 🔄 Setting up download handler...`);
+
+                const downloadPromise = new Promise((resolve, reject) => {
+                  const downloadHandler = async (download) => {
+                    try {
+                      console.error("[MCP] 📥 Download detected!");
+                      const suggestedName = download.suggestedFilename();
+                      console.error(
+                        `[MCP] 💾 Saving ${suggestedName} to ${filePath}`
+                      );
+
+                      await download.saveAs(filePath);
+                      savedFilePath = filePath;
+                      console.error(
+                        `[MCP] ✅ File saved successfully to: ${filePath}`
+                      );
+
+                      // 移除监听器
+                      this.page.off("download", downloadHandler);
+                      resolve(filePath);
+                    } catch (error) {
+                      console.error(
+                        `[MCP] ❌ Download save failed: ${error.message}`
+                      );
+                      this.page.off("download", downloadHandler);
+                      reject(error);
+                    }
+                  };
+
+                  // 注册下载监听器
+                  this.page.on("download", downloadHandler);
+
+                  // 超时处理
+                  setTimeout(() => {
+                    this.page.off("download", downloadHandler);
+                    reject(new Error("Download timeout after 5 seconds"));
+                  }, 5000);
+                });
+
+                // 准备文件名
+                const domain = completeData.domain.replace(/\./g, "_");
+                const timestamp = new Date()
+                  .toISOString()
+                  .replace(/[:.]/g, "-")
+                  .slice(0, 19);
+                const fileName = `auth_${domain}_${timestamp}.json`;
+
+                console.error(
+                  `[MCP] 🚀 Triggering standard blob download: ${fileName}`
+                );
+
+                // 将数据转为JSON字符串
+                const jsonContent = JSON.stringify(completeData, null, 2);
+                console.error(
+                  `[MCP] 📝 JSON size: ${jsonContent.length} chars`
+                );
+
+                // 在页面中触发下载 - 完全按照标准blob下载方式
+                const downloadTriggerResult = await this.page.evaluate(
+                  (jsonStr, filename) => {
+                    try {
+                      console.log(
+                        "[MCP] === Starting standard blob download ==="
+                      );
+
+                      // Step 1: Create a Blob object
+                      console.log("[MCP] Step 1: Creating Blob object...");
+                      const blob = new Blob([jsonStr], { type: "text/plain" });
+                      console.log(
+                        `[MCP] Blob created, size: ${blob.size} bytes`
+                      );
+
+                      // Step 2: Create an Object URL
+                      console.log("[MCP] Step 2: Creating Object URL...");
+                      const url = URL.createObjectURL(blob);
+                      console.log("[MCP] Object URL created:", url);
+
+                      // Step 3: Create a temporary anchor element
+                      console.log("[MCP] Step 3: Creating anchor element...");
+                      const link = document.createElement("a");
+
+                      // Step 4: Configure the anchor element
+                      console.log("[MCP] Step 4: Configuring anchor...");
+                      link.href = url;
+                      link.download = filename;
+
+                      // Step 5: Append and click the link
+                      console.log("[MCP] Step 5: Appending and clicking...");
+                      document.body.appendChild(link);
+                      link.click();
+                      console.log("[MCP] Click triggered!");
+
+                      // Step 6: Clean up (delayed to ensure download starts)
+                      console.log("[MCP] Step 6: Scheduling cleanup...");
+                      setTimeout(() => {
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+                        console.log("[MCP] Cleanup completed");
+                      }, 100);
+
+                      console.log("[MCP] === Download trigger completed ===");
+                      return {
+                        success: true,
+                        size: blob.size,
+                        filename: filename,
+                      };
+                    } catch (error) {
+                      console.error(
+                        "[MCP] Download trigger error:",
+                        error.message
+                      );
+                      return {
+                        success: false,
+                        error: error.message,
+                      };
+                    }
+                  },
+                  jsonContent,
+                  fileName
+                );
+
+                if (!downloadTriggerResult.success) {
+                  throw new Error(
+                    `Download trigger failed: ${downloadTriggerResult.error}`
+                  );
+                }
+
+                console.error(`[MCP] ✅ Download triggered successfully`);
+                console.error(
+                  `[MCP] 📊 File size: ${downloadTriggerResult.size} bytes`
+                );
+                console.error(
+                  `[MCP] 📄 Filename: ${downloadTriggerResult.filename}`
+                );
+                console.error(`[MCP] ⏳ Waiting for download to complete...`);
+
+                // 等待下载完成
+                try {
+                  await downloadPromise;
+                  console.error(`[MCP] ✅ File download and save completed!`);
+                } catch (downloadError) {
+                  console.error(
+                    `[MCP] ⚠️ Download handler error: ${downloadError.message}`
+                  );
+                  // 继续，可能是超时但文件已保存
+                }
+
+                // 验证文件是否存在（降级检查）
+                if (!savedFilePath) {
+                  // 如果下载监听器没有触发，尝试直接保存
+                  console.error(
+                    `[MCP] ⚠️ Download handler didn't trigger, trying direct save...`
+                  );
+                  const fs = require("fs");
+                  fs.writeFileSync(filePath, jsonContent);
+                  savedFilePath = filePath;
+                  console.error(
+                    `[MCP] ✅ File saved directly via fs.writeFileSync`
+                  );
+                }
+              } catch (error) {
+                console.error(
+                  `[MCP] ❌ Standard blob download failed: ${error.message}`
+                );
+                throw error; // 让外层catch处理降级逻辑
+              }
+            }
+          } catch (saveError) {
+            console.error(
+              `[MCP] ⚠️ Failed to save file via Playwright: ${saveError.message}`
+            );
+            // 降级到直接文件写入
+            try {
+              const filePath = capturedData.captureInfo.filePath;
+              if (filePath) {
+                const fs = require("fs");
+                const context = this.page.context();
+                const browserCookies = await context.cookies();
+
+                const completeData = {
+                  ...capturedData,
+                  cookies: browserCookies.map((cookie) => ({
+                    name: cookie.name,
+                    value: cookie.value,
+                    domain: cookie.domain,
+                    path: cookie.path,
+                    expires: cookie.expires,
+                    httpOnly: cookie.httpOnly,
+                    secure: cookie.secure,
+                    sameSite: cookie.sameSite,
+                  })),
+                  cookieString: capturedData.cookies,
+                };
+
+                fs.writeFileSync(
+                  filePath,
+                  JSON.stringify(completeData, null, 2)
+                );
+                savedFilePath = filePath;
+                console.error(
+                  `[MCP] ✅ Fallback: Authentication data saved via fs to: ${filePath}`
+                );
+              }
+            } catch (fallbackError) {
+              console.error(
+                `[MCP] ❌ Fallback save also failed: ${fallbackError.message}`
+              );
+            }
+          }
+        }
+
+        // 获取存储数据用于显示
+        console.error("[MCP] Capturing authentication data for display...");
+        const storageData = {
+          url: this.page.url(),
+          domain: new URL(this.page.url()).hostname,
+          timestamp: new Date().toISOString(),
+          loginDuration: Math.round(waitDuration / 1000),
+          cookies: [],
+          localStorage: {},
+          sessionStorage: {},
+        };
+
+        // 获取cookies
+        try {
+          const context = this.page.context();
+          const cookies = await context.cookies();
+          storageData.cookies = cookies.map((cookie) => ({
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path: cookie.path,
+            expires: cookie.expires,
+            httpOnly: cookie.httpOnly,
+            secure: cookie.secure,
+            sameSite: cookie.sameSite,
+          }));
+          console.error(`[MCP] Captured ${storageData.cookies.length} cookies`);
+        } catch (cookieError) {
+          console.error(`[MCP] Error getting cookies: ${cookieError.message}`);
+          storageData.cookieError = cookieError.message;
+        }
+
+        // 获取localStorage和sessionStorage
+        try {
+          const storageResult = await this.page.evaluate(() => {
+            const result = {
+              localStorage: {},
+              sessionStorage: {},
+            };
+
+            // localStorage
+            try {
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key) result.localStorage[key] = localStorage.getItem(key);
+              }
+            } catch (e) {
+              result.localStorageError = e.message;
+            }
+
+            // sessionStorage
+            try {
+              for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                if (key)
+                  result.sessionStorage[key] = sessionStorage.getItem(key);
+              }
+            } catch (e) {
+              result.sessionStorageError = e.message;
+            }
+
+            return result;
+          });
+
+          storageData.localStorage = storageResult.localStorage;
+          storageData.sessionStorage = storageResult.sessionStorage;
+
+          console.error(
+            `[MCP] Captured ${Object.keys(storageData.localStorage).length} localStorage items`
+          );
+          console.error(
+            `[MCP] Captured ${Object.keys(storageData.sessionStorage).length} sessionStorage items`
+          );
+        } catch (storageError) {
+          console.error(`[MCP] Error getting storage: ${storageError.message}`);
+          storageData.storageError = storageError.message;
+        }
+
+        // 移除UI元素
+        try {
+          await this.page.evaluate(() => {
+            const button = document.getElementById("mcp-finish-connect-btn");
+            const message = document.getElementById("mcp-login-message");
+            if (button) button.remove();
+            if (message) message.remove();
+          });
+        } catch (uiCleanupError) {
+          console.error(
+            `[MCP] Error removing UI elements: ${uiCleanupError.message}`
+          );
+        }
+
+        console.error(`[MCP] Authentication data captured successfully!`);
+
+        // 自动关闭浏览器（手动模式）
+        if (autoClose) {
+          console.error("[MCP] Auto-closing browser...");
+          try {
+            await this.page.close();
+            console.error("[MCP] Browser closed successfully");
+          } catch (closeError) {
+            console.error(`[MCP] Error closing browser: ${closeError.message}`);
+          }
+        }
+
+        // 返回结果（根据是否保存了文件显示不同信息）
+        if (savedFilePath) {
+          // saveToFile=true的情况，文件已保存
+          return {
+            content: [
+              {
+                type: "text",
+                text: `# ✅ 认证数据已保存到文件
+
+## 📁 文件信息
+- **保存路径**: \`${savedFilePath}\`
+- **保存时间**: ${new Date().toLocaleString("zh-CN")}
+- **文件大小**: ${globalThis.lastDownloadInfo?.size || "N/A"} bytes
+
+## 📊 数据统计
+- **域名**: ${storageData.domain}
+- **Cookies**: ${storageData.cookies.length} 个
+- **LocalStorage**: ${Object.keys(storageData.localStorage).length} 个键值对  
+- **SessionStorage**: ${Object.keys(storageData.sessionStorage).length} 个键值对
+
+## 🔧 使用方法
+文件已保存，可以在脚本中直接读取：
+\`\`\`javascript
+const fs = require('fs');
+const authData = JSON.parse(fs.readFileSync('${savedFilePath}', 'utf8'));
+// 使用 authData.cookies, authData.localStorage 等
+\`\`\`
+
+**提示**: 文件已成功保存！${autoClose ? "浏览器已自动关闭。" : "浏览器保持打开状态。"}`,
+              },
+            ],
+          };
+        } else {
+          // saveToFile=false的情况，仅返回数据
+          return {
+            content: [
+              {
+                type: "text",
+                text: `# 🔐 登录认证数据捕获完成
+
+## ⏱️ 登录信息
+- **登录耗时**: ${Math.round(waitDuration / 1000)} 秒
+- **当前URL**: ${storageData.url}
+- **域名**: ${storageData.domain}
+- **捕获时间**: ${new Date().toLocaleString("zh-CN")}
+
+## 🍪 数据统计
+- **Cookies**: ${storageData.cookies.length} 个
+- **LocalStorage**: ${Object.keys(storageData.localStorage).length} 个键值对  
+- **SessionStorage**: ${Object.keys(storageData.sessionStorage).length} 个键值对
+
+## 🔧 使用方法
+可以使用 \`set_storage\` 工具恢复这些认证数据:
+
+\`\`\`json
+{
+  "cookies": ${JSON.stringify(storageData.cookies, null, 2)},
+  "localStorage": ${JSON.stringify(storageData.localStorage, null, 2)},
+  "sessionStorage": ${JSON.stringify(storageData.sessionStorage, null, 2)},
+  "domain": "${storageData.domain}"
+}
+\`\`\`
+
+**提示**: 认证数据已成功捕获！${autoClose ? "浏览器已自动关闭。" : "浏览器保持打开状态。"}`,
+              },
+            ],
+          };
+        }
+      } // 关闭 if (!saveToFile) 块
+    } catch (error) {
+      console.error("[MCP] Interactive login capture failed:", error);
+
+      // 清理UI（如果存在）
+      try {
+        if (this.page) {
+          await this.page.evaluate(() => {
+            const button = document.getElementById("mcp-finish-connect-btn");
+            const message = document.querySelector(
+              '[style*="top: 70px"][style*="right: 20px"]'
+            );
+            if (button) button.remove();
+            if (message) message.remove();
+          });
+        }
+      } catch (cleanupError) {
+        // 忽略清理错误
+      }
+
+      throw new Error(`Interactive login capture failed: ${error.message}`);
+    }
+  },
+
+  get_storage: async function (args = {}) {
+    const { sessionId = "default", includeHttpOnlyCookies = true } = args;
+
+    if (!this.page) {
+      throw new Error(
+        "No browser page available. Launch or connect to browser first."
+      );
+    }
+
+    console.error("[MCP] Getting all storage data from current page");
+
+    try {
+      const storageData = {
+        url: this.page.url(),
+        domain: new URL(this.page.url()).hostname,
+        timestamp: new Date().toISOString(),
+        cookies: [],
+        localStorage: {},
+        sessionStorage: {},
+      };
+
+      // Get cookies
+      try {
+        const context = this.page.context();
+        const cookies = await context.cookies();
+
+        // Filter cookies for current domain if needed, or get all
+        storageData.cookies = cookies.map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path,
+          expires: cookie.expires,
+          httpOnly: cookie.httpOnly,
+          secure: cookie.secure,
+          sameSite: cookie.sameSite,
+        }));
+
+        console.error(`[MCP] Retrieved ${storageData.cookies.length} cookies`);
+      } catch (cookieError) {
+        console.error(`[MCP] Error getting cookies: ${cookieError.message}`);
+        storageData.cookieError = cookieError.message;
+      }
+
+      // Get localStorage and sessionStorage
+      try {
+        const storageResult = await this.page.evaluate(() => {
+          const result = {
+            localStorage: {},
+            sessionStorage: {},
+            localStorageLength: 0,
+            sessionStorageLength: 0,
+          };
+
+          // Get localStorage
+          try {
+            result.localStorageLength = localStorage.length;
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (key) {
+                result.localStorage[key] = localStorage.getItem(key);
+              }
+            }
+          } catch (e) {
+            result.localStorageError = e.message;
+          }
+
+          // Get sessionStorage
+          try {
+            result.sessionStorageLength = sessionStorage.length;
+            for (let i = 0; i < sessionStorage.length; i++) {
+              const key = sessionStorage.key(i);
+              if (key) {
+                result.sessionStorage[key] = sessionStorage.getItem(key);
+              }
+            }
+          } catch (e) {
+            result.sessionStorageError = e.message;
+          }
+
+          return result;
+        });
+
+        storageData.localStorage = storageResult.localStorage;
+        storageData.sessionStorage = storageResult.sessionStorage;
+
+        console.error(
+          `[MCP] Retrieved ${storageResult.localStorageLength} localStorage items`
+        );
+        console.error(
+          `[MCP] Retrieved ${storageResult.sessionStorageLength} sessionStorage items`
+        );
+
+        if (storageResult.localStorageError) {
+          storageData.localStorageError = storageResult.localStorageError;
+        }
+        if (storageResult.sessionStorageError) {
+          storageData.sessionStorageError = storageResult.sessionStorageError;
+        }
+      } catch (storageError) {
+        console.error(`[MCP] Error getting storage: ${storageError.message}`);
+        storageData.storageError = storageError.message;
+      }
+
+      // Generate summary
+      const summary = {
+        url: storageData.url,
+        domain: storageData.domain,
+        cookiesCount: storageData.cookies.length,
+        localStorageCount: Object.keys(storageData.localStorage).length,
+        sessionStorageCount: Object.keys(storageData.sessionStorage).length,
+        timestamp: storageData.timestamp,
+      };
+
+      console.error(`[MCP] Storage data retrieved successfully:`, summary);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `# Storage Data Retrieved
+
+## Summary
+- **URL**: ${summary.url}
+- **Domain**: ${summary.domain}
+- **Cookies**: ${summary.cookiesCount} items
+- **localStorage**: ${summary.localStorageCount} items  
+- **sessionStorage**: ${summary.sessionStorageCount} items
+- **Retrieved**: ${summary.timestamp}
+
+## Full Storage Data
+\`\`\`json
+${JSON.stringify(storageData, null, 2)}
+\`\`\`
+
+## Usage
+You can use this data with the \`set_storage\` tool to restore authentication state:
+- Use the \`cookies\` array for the \`cookies\` parameter
+- Use the \`localStorage\` object for the \`localStorage\` parameter  
+- Use the \`sessionStorage\` object for the \`sessionStorage\` parameter
+- Use the \`domain\` as the default domain for cookies`,
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("[MCP] Failed to get storage data:", error);
+      throw new Error(`Failed to get storage data: ${error.message}`);
+    }
+  },
+
   set_storage: async function (args = {}) {
-    const { cookies, cookieString, localStorage, sessionStorage, domain } =
-      args;
+    const {
+      cookies,
+      cookieString,
+      localStorage,
+      sessionStorage,
+      domain,
+      filePath,
+    } = args;
 
     if (!this.browser) {
       throw new Error(
         "No browser available. Launch or connect to browser first."
       );
     }
+
+    // 参数校验：filePath、cookies、cookieString 必须至少一个
+    if (!filePath && !cookies && !cookieString) {
+      throw new Error(
+        "You must provide at least one of filePath, cookies, or cookieString."
+      );
+    }
+
+    let storageData = {};
+    if (filePath) {
+      // 读取文件内容
+      const fs = require("fs");
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File not found: ${filePath}`);
+      }
+      try {
+        const content = fs.readFileSync(filePath, "utf8");
+        storageData = JSON.parse(content);
+      } catch (e) {
+        throw new Error(
+          `Failed to read or parse file: ${filePath}, ${e.message}`
+        );
+      }
+    }
+
+    // 优先用 filePath 里的数据，否则用参数
+    const cookiesInput = storageData.cookies || cookies;
+    const cookieStringInput = storageData.cookieString || cookieString;
+    const localStorageInput = storageData.localStorage || localStorage;
+    const sessionStorageInput = storageData.sessionStorage || sessionStorage;
+    const domainInput = storageData.domain || domain;
 
     console.error(
       `[MCP] Setting authentication storage (cookies, localStorage, sessionStorage) for session ${this.sessionId}`
@@ -1509,13 +3438,13 @@ const toolHandlers = {
       let results = {};
 
       // 处理Cookie设置
-      if (cookieString) {
+      if (cookieStringInput) {
         // 解析document.cookie格式的字符串
         console.error(
-          `[MCP] Parsing cookie string: ${cookieString.substring(0, 100)}...`
+          `[MCP] Parsing cookie string: ${cookieStringInput.substring(0, 100)}...`
         );
 
-        const parsedCookies = cookieString
+        const parsedCookies = cookieStringInput
           .split(";")
           .map((cookiePair) => {
             const [name, value] = cookiePair.trim().split("=");
@@ -1523,7 +3452,7 @@ const toolHandlers = {
               return {
                 name: name.trim(),
                 value: value.trim(),
-                domain: domain || "localhost", // 默认域名
+                domain: domainInput || "localhost", // 默认域名
                 path: "/",
               };
             }
@@ -1535,12 +3464,12 @@ const toolHandlers = {
         console.error(
           `[MCP] Parsed ${parsedCookies.length} cookies from string`
         );
-      } else if (cookies && Array.isArray(cookies)) {
+      } else if (cookiesInput && Array.isArray(cookiesInput)) {
         // 使用提供的cookie数组
-        cookiesToSet = cookies.map((cookie) => ({
+        cookiesToSet = cookiesInput.map((cookie) => ({
           name: cookie.name,
           value: cookie.value,
-          domain: cookie.domain || domain || "localhost",
+          domain: cookie.domain || domainInput || "localhost",
           path: cookie.path || "/",
           httpOnly: cookie.httpOnly || false,
           secure: cookie.secure || false,
@@ -1558,8 +3487,8 @@ const toolHandlers = {
 
       // 设置localStorage和sessionStorage
       if (
-        (localStorage && Object.keys(localStorage).length > 0) ||
-        (sessionStorage && Object.keys(sessionStorage).length > 0)
+        (localStorageInput && Object.keys(localStorageInput).length > 0) ||
+        (sessionStorageInput && Object.keys(sessionStorageInput).length > 0)
       ) {
         if (!this.page) {
           throw new Error("No active page available for setting storage");
@@ -1595,8 +3524,8 @@ const toolHandlers = {
 
             return results;
           },
-          localStorage,
-          sessionStorage
+          localStorageInput,
+          sessionStorageInput
         );
 
         results.localStorageSet = storageResults.localStorage;
@@ -1775,10 +3704,20 @@ const toolHandlers = {
 
   close_browser: async function (args = {}) {
     const { sessionId } = args;
+    const callTimestamp = new Date().toISOString();
+    const callStack = new Error().stack;
+
+    console.error(`[CLOSE-MANUAL] close_browser called at ${callTimestamp}`);
+    console.error(`[CLOSE-MANUAL] Arguments: ${JSON.stringify(args)}`);
+    console.error(
+      `[CLOSE-MANUAL] Call stack preview: ${callStack.split("\n")[2]?.trim()}`
+    );
 
     // 如果指定了sessionId且不是default，关闭指定的session
     if (sessionId && sessionId !== "default") {
-      console.error(`[MCP] Closing browser session: ${sessionId}`);
+      console.error(
+        `[CLOSE-MANUAL] Closing specific browser session: ${sessionId}`
+      );
 
       try {
         const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
@@ -1798,32 +3737,71 @@ const toolHandlers = {
 
         // 尝试连接到session并关闭
         let browserClosed = false;
+        const connectStartTime = new Date().toISOString();
+        console.error(
+          `[CLOSE-MANUAL] Attempting CDP connection to session ${sessionId} on port ${sessionInfo.debugPort}`
+        );
+
         try {
           const { chromium } = require("playwright");
           const browser = await chromium.connectOverCDP(
             `http://127.0.0.1:${sessionInfo.debugPort}`
           );
+
+          const connectSuccessTime = new Date().toISOString();
+          console.error(
+            `[CLOSE-MANUAL] CDP connection successful at ${connectSuccessTime}`
+          );
+
+          // Log browser state before closing
+          try {
+            const contexts = browser.contexts();
+            console.error(
+              `[CLOSE-MANUAL] Browser has ${contexts.length} context(s) before close`
+            );
+            const browserVersion = await browser.version();
+            console.error(`[CLOSE-MANUAL] Browser version: ${browserVersion}`);
+          } catch (stateError) {
+            console.error(
+              `[CLOSE-MANUAL] Could not get browser state: ${stateError.message}`
+            );
+          }
+
+          const closeStartTime = new Date().toISOString();
           await browser.close();
+          const closeEndTime = new Date().toISOString();
+
           browserClosed = true;
           console.error(
-            `[MCP] Browser for session ${sessionId} closed gracefully`
+            `[CLOSE-MANUAL] Browser for session ${sessionId} closed gracefully`
           );
+          console.error(
+            `[CLOSE-MANUAL] Close operation: ${closeStartTime} to ${closeEndTime}`
+          );
+
           // 等待浏览器完全释放文件锁定
           await new Promise((resolve) => setTimeout(resolve, 2000));
         } catch (e) {
           console.error(
-            `[MCP] Could not gracefully close browser for session ${sessionId}:`,
+            `[CLOSE-MANUAL] Could not gracefully close browser for session ${sessionId}:`,
             e.message
+          );
+          console.error(
+            `[CLOSE-MANUAL] Connection attempt started at: ${connectStartTime}`
           );
         }
 
         // 强制终止Chrome进程并等待退出
         if (sessionInfo.chromeProcessPid) {
+          console.error(
+            `[CLOSE-MANUAL] Attempting to kill Chrome process PID: ${sessionInfo.chromeProcessPid}`
+          );
           try {
             // 先尝试优雅终止
+            const sigTermTime = new Date().toISOString();
             process.kill(sessionInfo.chromeProcessPid, "SIGTERM");
             console.error(
-              `[MCP] Sent SIGTERM to Chrome process ${sessionInfo.chromeProcessPid}`
+              `[CLOSE-MANUAL] Sent SIGTERM to Chrome process ${sessionInfo.chromeProcessPid} at ${sigTermTime}`
             );
 
             // 等待进程退出
@@ -1929,8 +3907,9 @@ const toolHandlers = {
     }
 
     // 关闭当前session
+    const currentSessionCloseTime = new Date().toISOString();
     console.error(
-      `[MCP] Closing browser (Session: ${this.sessionId || "unknown"})`
+      `[CLOSE-MANUAL] Closing current session browser at ${currentSessionCloseTime} (Session: ${this.sessionId || "unknown"})`
     );
 
     let browserClosed = false;
@@ -1939,25 +3918,65 @@ const toolHandlers = {
     // 优雅关闭浏览器
     if (this.browser) {
       try {
+        // Log current browser state
+        try {
+          const contexts = this.browser.contexts();
+          console.error(
+            `[CLOSE-MANUAL] Current session browser has ${contexts.length} context(s)`
+          );
+          const browserVersion = await this.browser.version();
+          console.error(
+            `[CLOSE-MANUAL] Current session browser version: ${browserVersion}`
+          );
+        } catch (stateError) {
+          console.error(
+            `[CLOSE-MANUAL] Could not get current session browser state: ${stateError.message}`
+          );
+        }
+
+        const browserCloseStart = new Date().toISOString();
         await this.browser.close();
+        const browserCloseEnd = new Date().toISOString();
+
         browserClosed = true;
-        console.error("[MCP] Browser closed gracefully");
+        console.error(
+          `[CLOSE-MANUAL] Current session browser closed gracefully`
+        );
+        console.error(
+          `[CLOSE-MANUAL] Browser close duration: ${browserCloseStart} to ${browserCloseEnd}`
+        );
         this.browser = null;
         this.page = null;
         // 等待浏览器完全释放文件锁定
         await new Promise((resolve) => setTimeout(resolve, 2000));
       } catch (e) {
-        console.error("[MCP] Error closing browser gracefully:", e);
+        console.error(
+          `[CLOSE-MANUAL] Error closing current session browser gracefully: ${e.message}`
+        );
+        console.error(
+          `[CLOSE-MANUAL] Close attempt timestamp: ${currentSessionCloseTime}`
+        );
       }
+    } else {
+      console.error(
+        `[CLOSE-MANUAL] No current session browser to close at ${currentSessionCloseTime}`
+      );
     }
 
     // 优雅终止Chrome进程
     if (this.chromeProcess && !this.chromeProcess.killed) {
       try {
         const processPid = this.chromeProcess.pid;
+        console.error(
+          `[CLOSE-MANUAL] Attempting to terminate current session Chrome process PID: ${processPid}`
+        );
+
         // 先尝试SIGTERM优雅终止
+        const sigTermTime = new Date().toISOString();
         this.chromeProcess.kill("SIGTERM");
-        console.error("[MCP] Sent SIGTERM to Chrome process");
+        console.error(
+          `[CLOSE-MANUAL] Sent SIGTERM to current session Chrome process ${processPid} at ${sigTermTime}`
+        );
 
         // 等待进程优雅退出
         await new Promise((resolve) => {
@@ -2066,8 +4085,8 @@ const toolHandlers = {
       browserClosed && processClosed
         ? "Browser and process closed gracefully, session directory cleaned"
         : browserClosed
-        ? "Browser closed gracefully, process terminated, session directory cleaned"
-        : "Browser force closed, session directory cleaned";
+          ? "Browser closed gracefully, process terminated, session directory cleaned"
+          : "Browser force closed, session directory cleaned";
 
     return {
       content: [
@@ -2081,14 +4100,23 @@ const toolHandlers = {
 
   close_all_browsers: async function (args = {}) {
     const { force = false } = args;
+    const batchCloseTimestamp = new Date().toISOString();
+    const callStack = new Error().stack;
 
     console.error(
-      `[MCP] ${force ? "FORCE" : "Gracefully"} closing all browser sessions`
+      `[CLOSE-BATCH] ${force ? "FORCE" : "Gracefully"} closing all browser sessions at ${batchCloseTimestamp}`
+    );
+    console.error(`[CLOSE-BATCH] Arguments: ${JSON.stringify(args)}`);
+    console.error(
+      `[CLOSE-BATCH] Call stack preview: ${callStack.split("\n")[2]?.trim()}`
     );
 
     const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
 
     if (!require("fs").existsSync(sessionRegistryFile)) {
+      console.error(
+        `[CLOSE-BATCH] No sessions registry found at ${sessionRegistryFile}`
+      );
       return {
         content: [
           {
@@ -2105,6 +4133,7 @@ const toolHandlers = {
     const sessionIds = Object.keys(sessions);
 
     if (sessionIds.length === 0) {
+      console.error(`[CLOSE-BATCH] Registry exists but contains no sessions`);
       return {
         content: [
           {
@@ -2115,7 +4144,13 @@ const toolHandlers = {
       };
     }
 
-    console.error(`[MCP] Found ${sessionIds.length} sessions to close`);
+    console.error(`[CLOSE-BATCH] Found ${sessionIds.length} sessions to close`);
+    sessionIds.forEach((sessionId, index) => {
+      const sessionInfo = sessions[sessionId];
+      console.error(
+        `[CLOSE-BATCH] Session ${index + 1}: ${sessionId} (PID: ${sessionInfo.chromeProcessPid || "unknown"}, Port: ${sessionInfo.debugPort || "unknown"})`
+      );
+    });
 
     let closedCount = 0;
     let errorCount = 0;
@@ -2126,43 +4161,70 @@ const toolHandlers = {
 
         if (force) {
           // Force模式：直接kill进程
+          console.error(
+            `[CLOSE-BATCH] Processing session ${sessionId} in FORCE mode`
+          );
           try {
             if (sessionInfo.chromeProcessPid) {
+              const forceKillTime = new Date().toISOString();
               process.kill(sessionInfo.chromeProcessPid, "SIGKILL");
               console.error(
-                `[MCP] Force killed Chrome process ${sessionInfo.chromeProcessPid} for session ${sessionId}`
+                `[CLOSE-BATCH] Force killed Chrome process ${sessionInfo.chromeProcessPid} for session ${sessionId} at ${forceKillTime}`
+              );
+            } else {
+              console.error(
+                `[CLOSE-BATCH] Session ${sessionId} has no Chrome process PID to kill`
               );
             }
           } catch (e) {
             console.error(
-              `[MCP] Chrome process ${sessionInfo.chromeProcessPid} already dead`
+              `[CLOSE-BATCH] Chrome process ${sessionInfo.chromeProcessPid} already dead for session ${sessionId}: ${e.message}`
             );
           }
         } else {
           // 优雅模式：先尝试优雅关闭，失败后force kill
+          console.error(
+            `[CLOSE-BATCH] Processing session ${sessionId} in GRACEFUL mode`
+          );
+          const gracefulStartTime = new Date().toISOString();
+
           try {
+            console.error(
+              `[CLOSE-BATCH] Attempting CDP connection to session ${sessionId} on port ${sessionInfo.debugPort}`
+            );
             const { chromium } = require("playwright");
             const browser = await chromium.connectOverCDP(
               `http://127.0.0.1:${sessionInfo.debugPort}`
             );
+
+            const gracefulCloseTime = new Date().toISOString();
             await browser.close();
             console.error(
-              `[MCP] Browser for session ${sessionId} closed gracefully`
+              `[CLOSE-BATCH] Browser for session ${sessionId} closed gracefully at ${gracefulCloseTime}`
             );
           } catch (e) {
             console.error(
-              `[MCP] Could not gracefully close session ${sessionId}, force killing...`
+              `[CLOSE-BATCH] Could not gracefully close session ${sessionId}, force killing... Error: ${e.message}`
             );
+            console.error(
+              `[CLOSE-BATCH] Graceful attempt started at: ${gracefulStartTime}`
+            );
+
             try {
               if (sessionInfo.chromeProcessPid) {
+                const forceKillTime = new Date().toISOString();
                 process.kill(sessionInfo.chromeProcessPid, "SIGKILL");
                 console.error(
-                  `[MCP] Force killed Chrome process ${sessionInfo.chromeProcessPid}`
+                  `[CLOSE-BATCH] Force killed Chrome process ${sessionInfo.chromeProcessPid} at ${forceKillTime}`
+                );
+              } else {
+                console.error(
+                  `[CLOSE-BATCH] Session ${sessionId} has no Chrome process PID for force kill`
                 );
               }
             } catch (killError) {
               console.error(
-                `[MCP] Process already dead: ${sessionInfo.chromeProcessPid}`
+                `[CLOSE-BATCH] Process already dead: ${sessionInfo.chromeProcessPid} - ${killError.message}`
               );
             }
           }
@@ -2183,16 +4245,25 @@ const toolHandlers = {
         closedCount++;
       } catch (error) {
         console.error(
-          `[MCP] Failed to close session ${sessionId}:`,
-          error.message
+          `[CLOSE-BATCH] Failed to close session ${sessionId}: ${error.message}`
         );
         errorCount++;
       }
     }
 
+    const batchCompleteTime = new Date().toISOString();
+    console.error(
+      `[CLOSE-BATCH] Batch operation completed at ${batchCompleteTime}`
+    );
+    console.error(
+      `[CLOSE-BATCH] Results: ${closedCount} closed, ${errorCount} errors out of ${sessionIds.length} total sessions`
+    );
+
     // 清空注册表
     require("fs").writeFileSync(sessionRegistryFile, "{}");
-    console.error("[MCP] Sessions registry cleared");
+    console.error(
+      `[CLOSE-BATCH] Sessions registry cleared at ${new Date().toISOString()}`
+    );
 
     const message = `Closed ${closedCount} active sessions${
       errorCount > 0 ? `, ${errorCount} failed` : ""
@@ -2394,6 +4465,8 @@ const liteTools = [
   "cleanup_sessions",
   "run_script",
   "run_script_background",
+  "get_login",
+  "get_storage",
   "set_storage",
 ];
 
