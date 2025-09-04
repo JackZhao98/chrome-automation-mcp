@@ -515,7 +515,7 @@ const toolDefinitions = [
         url: {
           type: "string",
           description:
-            "URL to navigate to for login (e.g., 'https://chatgpt.com')",
+            "URL to navigate to for login (e.g., 'https://google.com')",
         },
         waitMessage: {
           type: "string",
@@ -540,7 +540,7 @@ const toolDefinitions = [
   },
   {
     name: "get_storage",
-    lite: true, // Essential for authentication workflows
+    // lite: true, // Essential for authentication workflows
     description:
       "🔍 Get all storage data from the current page including cookies, localStorage, and sessionStorage. Use this to capture authentication state for later restoration with set_storage.",
     inputSchema: {
