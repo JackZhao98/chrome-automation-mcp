@@ -3274,9 +3274,22 @@ You can use this data with the \`set_storage\` tool to restore authentication st
       sessionStorage,
       domain,
       filePath,
+      sessionId = "default",
     } = args;
 
-    if (!this.browser) {
+    let browser = this.browser;
+    let page = this.page;
+    let currentSessionId = this.sessionId;
+
+    // 如果指定了sessionId且不是default，使用指定的session
+    if (sessionId && sessionId !== "default") {
+      const { browser: sessionBrowser, page: sessionPage } = await getBrowserBySessionId(sessionId);
+      browser = sessionBrowser;
+      page = sessionPage;
+      currentSessionId = sessionId;
+    }
+
+    if (!browser) {
       throw new Error(
         "No browser available. Launch or connect to browser first."
       );
@@ -3314,11 +3327,11 @@ You can use this data with the \`set_storage\` tool to restore authentication st
     const domainInput = storageData.domain || domain;
 
     console.error(
-      `[MCP] Setting authentication storage (cookies, localStorage, sessionStorage) for session ${this.sessionId}`
+      `[MCP] Setting authentication storage (cookies, localStorage, sessionStorage) for session ${currentSessionId}`
     );
 
     try {
-      const context = this.browser.contexts()[0];
+      const context = browser.contexts()[0];
       let cookiesToSet = [];
       let results = {};
 
@@ -3375,12 +3388,13 @@ You can use this data with the \`set_storage\` tool to restore authentication st
         (localStorageInput && Object.keys(localStorageInput).length > 0) ||
         (sessionStorageInput && Object.keys(sessionStorageInput).length > 0)
       ) {
-        if (!this.page) {
+        if (!page) {
           throw new Error("No active page available for setting storage");
         }
 
-        const storageResults = await this.page.evaluate(
-          (localData, sessionData) => {
+        const storageResults = await page.evaluate(
+          (storageData) => {
+            const { localData, sessionData } = storageData;
             const results = { localStorage: 0, sessionStorage: 0 };
 
             // 设置localStorage
@@ -3409,8 +3423,10 @@ You can use this data with the \`set_storage\` tool to restore authentication st
 
             return results;
           },
-          localStorageInput,
-          sessionStorageInput
+          {
+            localData: localStorageInput,
+            sessionData: sessionStorageInput
+          }
         );
 
         results.localStorageSet = storageResults.localStorage;
@@ -3434,8 +3450,8 @@ You can use this data with the \`set_storage\` tool to restore authentication st
             type: "text",
             text: JSON.stringify(
               {
-                message: `Successfully set storage data for session ${this.sessionId}`,
-                sessionId: this.sessionId,
+                message: `Successfully set storage data for session ${currentSessionId}`,
+                sessionId: currentSessionId,
                 results: {
                   cookiesSet: results.cookiesSet || 0,
                   localStorageSet: results.localStorageSet || 0,

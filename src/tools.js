@@ -500,8 +500,14 @@ const toolDefinitions = [
           description:
             "🌐 Default website domain for cookies when not specified individually. Example: 'localhost:3001', 'app.example.com'",
         },
+        sessionId: {
+          type: "string",
+          description: "Session ID to operate on",
+          default: "default",
+        },
       },
-      // No required fields, but cookies/cookieString/filePath must provide at least one (enforced in handler)
+      required: ["sessionId"],
+      additionalProperties: false,
     },
   },
   {
