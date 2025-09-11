@@ -2570,174 +2570,66 @@ set_storage cookies=[...] localStorage={...} domain="${new URL(this.page.url()).
         console.error(`[MCP] Button monitoring stopped`);
       };
 
-      // 根据saveToFile参数决定工作流程
-      if (saveToFile) {
-        // saveToFile=true：立即返回文件路径，不等待用户操作
-        const filePath = this.generateFilePath(url);
+      // 等待用户点击按钮
+      console.error(
+        `[MCP] 👆 Waiting for user to click 'Finish Connect' button`
+      );
 
-        console.error(`[MCP] 💾 File save mode activated`);
-        console.error(`[MCP] 📁 File will be saved to: ${filePath}`);
-
-        // 在页面中设置保存逻辑
-        await this.page.evaluate((targetPath) => {
-          window.mcpFilePath = targetPath;
-          console.log("[MCP] File path set for save:", targetPath);
-
-          // 重写按钮点击事件，添加下载逻辑
-          window.mcpHandleButtonClick = async () => {
-            console.log("[MCP] Button click handler triggered");
-
+      // 等待用户点击按钮
+      const startWaitTime = Date.now();
+      try {
+        // 使用轮询而不是 waitForFunction 来避免 CSP 限制
+        const loginFinished = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error('Login timeout after 10 minutes'));
+          }, 10 * 60 * 1000);
+          
+          const checkFinished = async () => {
             try {
-              // 收集认证数据
-              const storageData = {
-                url: window.location.href,
-                domain: window.location.hostname,
-                timestamp: new Date().toISOString(),
-                cookies: document.cookie,
-                localStorage: {},
-                sessionStorage: {},
-              };
-
-              // 收集 localStorage
-              try {
-                for (let i = 0; i < localStorage.length; i++) {
-                  const key = localStorage.key(i);
-                  if (key)
-                    storageData.localStorage[key] = localStorage.getItem(key);
-                }
-              } catch (e) {
-                storageData.localStorageError = e.message;
+              const finished = await this.page.evaluate(() => window.mcpLoginFinished === true);
+              if (finished) {
+                clearTimeout(timeout);
+                resolve();
+              } else {
+                setTimeout(checkFinished, 1000); // 每秒检查一次
               }
-
-              // 收集 sessionStorage
-              try {
-                for (let i = 0; i < sessionStorage.length; i++) {
-                  const key = sessionStorage.key(i);
-                  if (key)
-                    storageData.sessionStorage[key] =
-                      sessionStorage.getItem(key);
-                }
-              } catch (e) {
-                storageData.sessionStorageError = e.message;
-              }
-
-              // 创建下载
-              const jsonContent = JSON.stringify(storageData, null, 2);
-              const blob = new Blob([jsonContent], { type: "text/plain" });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement("a");
-              link.href = url;
-              link.download = targetPath.split("/").pop(); // 使用文件名部分
-              document.body.appendChild(link);
-              link.click();
-
-              // 清理
-              setTimeout(() => {
-                document.body.removeChild(link);
-                URL.revokeObjectURL(url);
-              }, 100);
-
-              console.log("[MCP] Download triggered for:", targetPath);
-
-              // 标记完成
-              window.mcpDownloadTriggered = true;
-            } catch (error) {
-              console.error("[MCP] Error in button click handler:", error);
-              window.mcpDownloadError = error.message;
+            } catch (e) {
+              // 如果 evaluate 失败，继续轮询
+              setTimeout(checkFinished, 1000);
             }
           };
-
-          console.log("[MCP] Button click handler configured for file save");
-        }, filePath);
-
-        // 设置下载监听器（在后台处理文件保存）
-        this.page.on("download", async (download) => {
-          try {
-            console.error(
-              `[MCP] 📥 Download detected: ${download.suggestedFilename()}`
-            );
-            await download.saveAs(filePath);
-            console.error(`[MCP] ✅ File saved to: ${filePath}`);
-          } catch (error) {
-            console.error(`[MCP] ❌ Failed to save download: ${error.message}`);
-          }
+          
+          checkFinished();
         });
+        
+        await loginFinished;
 
-        // 立即返回文件路径信息
-        return {
-          content: [
-            {
-              type: "text",
-              text: `# 📁 认证捕获文件模式
-
-## 文件信息
-- **保存路径**: \`${filePath}\`
-- **状态**: 等待用户操作
-
-## 操作说明
-1. 在打开的浏览器中完成登录
-2. 点击右上角的 "Once logged in, tap here to connect & save" 按钮
-3. 文件将自动下载并保存到指定路径
-
-## 注意事项
-- 浏览器将保持打开状态
-- 完成操作后可手动关闭浏览器
-- 如果下载失败，请检查浏览器控制台日志
-
-**提示**: 请在浏览器中完成您的登录操作！`,
-            },
-          ],
-        };
-      } else {
-        // saveToFile=false：等待用户手动点击按钮
         console.error(
-          `[MCP] 👆 Manual mode: Waiting for user to click 'Finish Connect' button`
+          `[MCP] ✅ User click detected, processing data and file save...`
         );
+
+        // 用户点击了完成，清理定时器
+        cleanupInterval();
+      } catch (waitError) {
+        // 超时或错误，清理定时器
+        cleanupInterval();
+
+        if (waitError.message.includes("Timeout")) {
+          console.error(`[MCP] Login timeout after 10 minutes`);
+          throw new Error(
+            'Login timeout: Please complete login and click "Finish Connect" within 10 minutes'
+          );
+        }
+        throw waitError;
       }
 
-      // 只有saveToFile=false时才等待用户点击
-      if (!saveToFile) {
-        const startWaitTime = Date.now();
-        try {
-          await this.page.waitForFunction(
-            () => {
-              const finished = window.mcpLoginFinished === true;
-              if (finished) {
-                console.log("[MCP] mcpLoginFinished detected as true");
-              }
-              return finished;
-            },
-            {
-              timeout: 10 * 60 * 1000, // 10分钟超时
-            }
-          );
+      const waitDuration = Date.now() - startWaitTime;
+      console.error(
+        `[MCP] User completed login after ${Math.round(waitDuration / 1000)}s`
+      );
 
-          console.error(
-            `[MCP] ✅ User click detected, processing data and file save...`
-          );
-
-          // 用户点击了完成，清理定时器
-          cleanupInterval();
-        } catch (waitError) {
-          // 超时或错误，清理定时器
-          cleanupInterval();
-
-          if (waitError.message.includes("Timeout")) {
-            console.error(`[MCP] Login timeout after 10 minutes`);
-            throw new Error(
-              'Login timeout: Please complete login and click "Finish Connect" within 10 minutes'
-            );
-          }
-          throw waitError;
-        }
-
-        const waitDuration = Date.now() - startWaitTime;
-        console.error(
-          `[MCP] User completed login after ${Math.round(waitDuration / 1000)}s`
-        );
-
-        // 检查是否需要保存文件
-        console.error(`[MCP] 🔍 Checking captured data...`);
+      // 检查是否需要保存文件
+      console.error(`[MCP] 🔍 Checking captured data...`);
         const capturedData = await this.page.evaluate(() => {
           const data = window.mcpCapturedData || null;
           if (data) {
@@ -3128,6 +3020,21 @@ set_storage cookies=[...] localStorage={...} domain="${new URL(this.page.url()).
 
         console.error(`[MCP] Authentication data captured successfully!`);
 
+        // 总是保存到临时文件
+        const filePath = this.generateFilePath(url);
+        try {
+          const fs = require("fs");
+          await fs.promises.writeFile(
+            filePath,
+            JSON.stringify(storageData, null, 2),
+            "utf8"
+          );
+          savedFilePath = filePath;
+          console.error(`[MCP] ✅ File saved successfully: ${filePath}`);
+        } catch (saveError) {
+          console.error(`[MCP] ❌ Failed to save file: ${saveError.message}`);
+        }
+
         // 自动关闭浏览器（手动模式）
         if (autoClose) {
           console.error("[MCP] Auto-closing browser...");
@@ -3146,28 +3053,7 @@ set_storage cookies=[...] localStorage={...} domain="${new URL(this.page.url()).
             content: [
               {
                 type: "text",
-                text: `# ✅ 认证数据已保存到文件
-
-## 📁 文件信息
-- **保存路径**: \`${savedFilePath}\`
-- **保存时间**: ${new Date().toLocaleString("zh-CN")}
-- **文件大小**: ${globalThis.lastDownloadInfo?.size || "N/A"} bytes
-
-## 📊 数据统计
-- **域名**: ${storageData.domain}
-- **Cookies**: ${storageData.cookies.length} 个
-- **LocalStorage**: ${Object.keys(storageData.localStorage).length} 个键值对  
-- **SessionStorage**: ${Object.keys(storageData.sessionStorage).length} 个键值对
-
-## 🔧 使用方法
-文件已保存，可以在脚本中直接读取：
-\`\`\`javascript
-const fs = require('fs');
-const authData = JSON.parse(fs.readFileSync('${savedFilePath}', 'utf8'));
-// 使用 authData.cookies, authData.localStorage 等
-\`\`\`
-
-**提示**: 文件已成功保存！${autoClose ? "浏览器已自动关闭。" : "浏览器保持打开状态。"}`,
+                text: savedFilePath,
               },
             ],
           };
@@ -3207,7 +3093,6 @@ const authData = JSON.parse(fs.readFileSync('${savedFilePath}', 'utf8'));
             ],
           };
         }
-      } // 关闭 if (!saveToFile) 块
     } catch (error) {
       console.error("[MCP] Interactive login capture failed:", error);
 
