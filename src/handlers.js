@@ -2580,13 +2580,18 @@ set_storage cookies=[...] localStorage={...} domain="${new URL(this.page.url()).
       try {
         // 使用轮询而不是 waitForFunction 来避免 CSP 限制
         const loginFinished = new Promise((resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error('Login timeout after 10 minutes'));
-          }, 10 * 60 * 1000);
-          
+          const timeout = setTimeout(
+            () => {
+              reject(new Error("Login timeout after 10 minutes"));
+            },
+            10 * 60 * 1000
+          );
+
           const checkFinished = async () => {
             try {
-              const finished = await this.page.evaluate(() => window.mcpLoginFinished === true);
+              const finished = await this.page.evaluate(
+                () => window.mcpLoginFinished === true
+              );
               if (finished) {
                 clearTimeout(timeout);
                 resolve();
@@ -2598,10 +2603,10 @@ set_storage cookies=[...] localStorage={...} domain="${new URL(this.page.url()).
               setTimeout(checkFinished, 1000);
             }
           };
-          
+
           checkFinished();
         });
-        
+
         await loginFinished;
 
         console.error(
@@ -2630,440 +2635,428 @@ set_storage cookies=[...] localStorage={...} domain="${new URL(this.page.url()).
 
       // 检查是否需要保存文件
       console.error(`[MCP] 🔍 Checking captured data...`);
-        const capturedData = await this.page.evaluate(() => {
-          const data = window.mcpCapturedData || null;
-          if (data) {
-            console.log("[MCP] Found captured data:", {
-              domain: data.domain,
-              saveToFile: data.captureInfo
-                ? data.captureInfo.saveToFile
-                : "no captureInfo",
-              filePath: data.captureInfo
-                ? data.captureInfo.filePath
-                : "no path",
-            });
-          } else {
-            console.log(
-              "[MCP] No captured data found in window.mcpCapturedData"
-            );
-          }
-          return data;
-        });
-
-        let savedFilePath = null;
-        console.error(`[MCP] 🔍 capturedData exists: ${!!capturedData}`);
-        if (capturedData) {
-          console.error(
-            `[MCP] 🔍 captureInfo exists: ${!!capturedData.captureInfo}`
-          );
-          if (capturedData.captureInfo) {
-            console.error(
-              `[MCP] 🔍 saveToFile: ${capturedData.captureInfo.saveToFile}`
-            );
-            console.error(
-              `[MCP] 🔍 filePath: ${capturedData.captureInfo.filePath}`
-            );
-          }
+      const capturedData = await this.page.evaluate(() => {
+        const data = window.mcpCapturedData || null;
+        if (data) {
+          console.log("[MCP] Found captured data:", {
+            domain: data.domain,
+            saveToFile: data.captureInfo
+              ? data.captureInfo.saveToFile
+              : "no captureInfo",
+            filePath: data.captureInfo ? data.captureInfo.filePath : "no path",
+          });
+        } else {
+          console.log("[MCP] No captured data found in window.mcpCapturedData");
         }
+        return data;
+      });
 
-        if (
-          capturedData &&
-          capturedData.captureInfo &&
-          capturedData.captureInfo.saveToFile
-        ) {
-          try {
-            // 获取完整的cookies
-            const context = this.page.context();
-            const browserCookies = await context.cookies();
+      let savedFilePath = null;
+      console.error(`[MCP] 🔍 capturedData exists: ${!!capturedData}`);
+      if (capturedData) {
+        console.error(
+          `[MCP] 🔍 captureInfo exists: ${!!capturedData.captureInfo}`
+        );
+        if (capturedData.captureInfo) {
+          console.error(
+            `[MCP] 🔍 saveToFile: ${capturedData.captureInfo.saveToFile}`
+          );
+          console.error(
+            `[MCP] 🔍 filePath: ${capturedData.captureInfo.filePath}`
+          );
+        }
+      }
 
-            // 合并数据
-            const completeData = {
-              ...capturedData,
-              cookies: browserCookies.map((cookie) => ({
-                name: cookie.name,
-                value: cookie.value,
-                domain: cookie.domain,
-                path: cookie.path,
-                expires: cookie.expires,
-                httpOnly: cookie.httpOnly,
-                secure: cookie.secure,
-                sameSite: cookie.sameSite,
-              })),
-              cookieString: capturedData.cookies, // 保留原始cookie字符串
-            };
+      if (
+        capturedData &&
+        capturedData.captureInfo &&
+        capturedData.captureInfo.saveToFile
+      ) {
+        try {
+          // 获取完整的cookies
+          const context = this.page.context();
+          const browserCookies = await context.cookies();
 
-            // 使用标准的blob下载方式保存文件
-            const filePath = capturedData.captureInfo.filePath;
-            if (filePath) {
-              console.error(`[MCP] 📥 Starting file save process...`);
-              console.error(`[MCP] 📁 Target file path: ${filePath}`);
+          // 合并数据
+          const completeData = {
+            ...capturedData,
+            cookies: browserCookies.map((cookie) => ({
+              name: cookie.name,
+              value: cookie.value,
+              domain: cookie.domain,
+              path: cookie.path,
+              expires: cookie.expires,
+              httpOnly: cookie.httpOnly,
+              secure: cookie.secure,
+              sameSite: cookie.sameSite,
+            })),
+            cookieString: capturedData.cookies, // 保留原始cookie字符串
+          };
 
-              // 打印数据统计
-              const cookieCount = completeData.cookies
-                ? completeData.cookies.length
-                : 0;
-              const localStorageCount = Object.keys(
-                completeData.localStorage || {}
-              ).length;
-              const sessionStorageCount = Object.keys(
-                completeData.sessionStorage || {}
-              ).length;
+          // 使用标准的blob下载方式保存文件
+          const filePath = capturedData.captureInfo.filePath;
+          if (filePath) {
+            console.error(`[MCP] 📥 Starting file save process...`);
+            console.error(`[MCP] 📁 Target file path: ${filePath}`);
 
-              console.error(
-                `[MCP] 📊 Data: ${cookieCount} cookies, ${localStorageCount} localStorage, ${sessionStorageCount} sessionStorage`
-              );
+            // 打印数据统计
+            const cookieCount = completeData.cookies
+              ? completeData.cookies.length
+              : 0;
+            const localStorageCount = Object.keys(
+              completeData.localStorage || {}
+            ).length;
+            const sessionStorageCount = Object.keys(
+              completeData.sessionStorage || {}
+            ).length;
 
-              try {
-                // 设置简单的下载监听器
-                console.error(`[MCP] 🔄 Setting up download handler...`);
-
-                const downloadPromise = new Promise((resolve, reject) => {
-                  const downloadHandler = async (download) => {
-                    try {
-                      console.error("[MCP] 📥 Download detected!");
-                      const suggestedName = download.suggestedFilename();
-                      console.error(
-                        `[MCP] 💾 Saving ${suggestedName} to ${filePath}`
-                      );
-
-                      await download.saveAs(filePath);
-                      savedFilePath = filePath;
-                      console.error(
-                        `[MCP] ✅ File saved successfully to: ${filePath}`
-                      );
-
-                      // 移除监听器
-                      this.page.off("download", downloadHandler);
-                      resolve(filePath);
-                    } catch (error) {
-                      console.error(
-                        `[MCP] ❌ Download save failed: ${error.message}`
-                      );
-                      this.page.off("download", downloadHandler);
-                      reject(error);
-                    }
-                  };
-
-                  // 注册下载监听器
-                  this.page.on("download", downloadHandler);
-
-                  // 超时处理
-                  setTimeout(() => {
-                    this.page.off("download", downloadHandler);
-                    reject(new Error("Download timeout after 5 seconds"));
-                  }, 5000);
-                });
-
-                // 准备文件名
-                const domain = completeData.domain.replace(/\./g, "_");
-                const timestamp = new Date()
-                  .toISOString()
-                  .replace(/[:.]/g, "-")
-                  .slice(0, 19);
-                const fileName = `auth_${domain}_${timestamp}.json`;
-
-                console.error(
-                  `[MCP] 🚀 Triggering standard blob download: ${fileName}`
-                );
-
-                // 将数据转为JSON字符串
-                const jsonContent = JSON.stringify(completeData, null, 2);
-                console.error(
-                  `[MCP] 📝 JSON size: ${jsonContent.length} chars`
-                );
-
-                // 在页面中触发下载 - 完全按照标准blob下载方式
-                const downloadTriggerResult = await this.page.evaluate(
-                  (jsonStr, filename) => {
-                    try {
-                      console.log(
-                        "[MCP] === Starting standard blob download ==="
-                      );
-
-                      // Step 1: Create a Blob object
-                      console.log("[MCP] Step 1: Creating Blob object...");
-                      const blob = new Blob([jsonStr], { type: "text/plain" });
-                      console.log(
-                        `[MCP] Blob created, size: ${blob.size} bytes`
-                      );
-
-                      // Step 2: Create an Object URL
-                      console.log("[MCP] Step 2: Creating Object URL...");
-                      const url = URL.createObjectURL(blob);
-                      console.log("[MCP] Object URL created:", url);
-
-                      // Step 3: Create a temporary anchor element
-                      console.log("[MCP] Step 3: Creating anchor element...");
-                      const link = document.createElement("a");
-
-                      // Step 4: Configure the anchor element
-                      console.log("[MCP] Step 4: Configuring anchor...");
-                      link.href = url;
-                      link.download = filename;
-
-                      // Step 5: Append and click the link
-                      console.log("[MCP] Step 5: Appending and clicking...");
-                      document.body.appendChild(link);
-                      link.click();
-                      console.log("[MCP] Click triggered!");
-
-                      // Step 6: Clean up (delayed to ensure download starts)
-                      console.log("[MCP] Step 6: Scheduling cleanup...");
-                      setTimeout(() => {
-                        document.body.removeChild(link);
-                        URL.revokeObjectURL(url);
-                        console.log("[MCP] Cleanup completed");
-                      }, 100);
-
-                      console.log("[MCP] === Download trigger completed ===");
-                      return {
-                        success: true,
-                        size: blob.size,
-                        filename: filename,
-                      };
-                    } catch (error) {
-                      console.error(
-                        "[MCP] Download trigger error:",
-                        error.message
-                      );
-                      return {
-                        success: false,
-                        error: error.message,
-                      };
-                    }
-                  },
-                  jsonContent,
-                  fileName
-                );
-
-                if (!downloadTriggerResult.success) {
-                  throw new Error(
-                    `Download trigger failed: ${downloadTriggerResult.error}`
-                  );
-                }
-
-                console.error(`[MCP] ✅ Download triggered successfully`);
-                console.error(
-                  `[MCP] 📊 File size: ${downloadTriggerResult.size} bytes`
-                );
-                console.error(
-                  `[MCP] 📄 Filename: ${downloadTriggerResult.filename}`
-                );
-                console.error(`[MCP] ⏳ Waiting for download to complete...`);
-
-                // 等待下载完成
-                try {
-                  await downloadPromise;
-                  console.error(`[MCP] ✅ File download and save completed!`);
-                } catch (downloadError) {
-                  console.error(
-                    `[MCP] ⚠️ Download handler error: ${downloadError.message}`
-                  );
-                  // 继续，可能是超时但文件已保存
-                }
-
-                // 验证文件是否存在（降级检查）
-                if (!savedFilePath) {
-                  // 如果下载监听器没有触发，尝试直接保存
-                  console.error(
-                    `[MCP] ⚠️ Download handler didn't trigger, trying direct save...`
-                  );
-                  const fs = require("fs");
-                  fs.writeFileSync(filePath, jsonContent);
-                  savedFilePath = filePath;
-                  console.error(
-                    `[MCP] ✅ File saved directly via fs.writeFileSync`
-                  );
-                }
-              } catch (error) {
-                console.error(
-                  `[MCP] ❌ Standard blob download failed: ${error.message}`
-                );
-                throw error; // 让外层catch处理降级逻辑
-              }
-            }
-          } catch (saveError) {
             console.error(
-              `[MCP] ⚠️ Failed to save file via Playwright: ${saveError.message}`
+              `[MCP] 📊 Data: ${cookieCount} cookies, ${localStorageCount} localStorage, ${sessionStorageCount} sessionStorage`
             );
-            // 降级到直接文件写入
-            try {
-              const filePath = capturedData.captureInfo.filePath;
-              if (filePath) {
-                const fs = require("fs");
-                const context = this.page.context();
-                const browserCookies = await context.cookies();
 
-                const completeData = {
-                  ...capturedData,
-                  cookies: browserCookies.map((cookie) => ({
-                    name: cookie.name,
-                    value: cookie.value,
-                    domain: cookie.domain,
-                    path: cookie.path,
-                    expires: cookie.expires,
-                    httpOnly: cookie.httpOnly,
-                    secure: cookie.secure,
-                    sameSite: cookie.sameSite,
-                  })),
-                  cookieString: capturedData.cookies,
+            try {
+              // 设置简单的下载监听器
+              console.error(`[MCP] 🔄 Setting up download handler...`);
+
+              const downloadPromise = new Promise((resolve, reject) => {
+                const downloadHandler = async (download) => {
+                  try {
+                    console.error("[MCP] 📥 Download detected!");
+                    const suggestedName = download.suggestedFilename();
+                    console.error(
+                      `[MCP] 💾 Saving ${suggestedName} to ${filePath}`
+                    );
+
+                    await download.saveAs(filePath);
+                    savedFilePath = filePath;
+                    console.error(
+                      `[MCP] ✅ File saved successfully to: ${filePath}`
+                    );
+
+                    // 移除监听器
+                    this.page.off("download", downloadHandler);
+                    resolve(filePath);
+                  } catch (error) {
+                    console.error(
+                      `[MCP] ❌ Download save failed: ${error.message}`
+                    );
+                    this.page.off("download", downloadHandler);
+                    reject(error);
+                  }
                 };
 
-                fs.writeFileSync(
-                  filePath,
-                  JSON.stringify(completeData, null, 2)
+                // 注册下载监听器
+                this.page.on("download", downloadHandler);
+
+                // 超时处理
+                setTimeout(() => {
+                  this.page.off("download", downloadHandler);
+                  reject(new Error("Download timeout after 5 seconds"));
+                }, 5000);
+              });
+
+              // 准备文件名
+              const domain = completeData.domain.replace(/\./g, "_");
+              const timestamp = new Date()
+                .toISOString()
+                .replace(/[:.]/g, "-")
+                .slice(0, 19);
+              const fileName = `auth_${domain}_${timestamp}.json`;
+
+              console.error(
+                `[MCP] 🚀 Triggering standard blob download: ${fileName}`
+              );
+
+              // 将数据转为JSON字符串
+              const jsonContent = JSON.stringify(completeData, null, 2);
+              console.error(`[MCP] 📝 JSON size: ${jsonContent.length} chars`);
+
+              // 在页面中触发下载 - 完全按照标准blob下载方式
+              const downloadTriggerResult = await this.page.evaluate(
+                (jsonStr, filename) => {
+                  try {
+                    console.log(
+                      "[MCP] === Starting standard blob download ==="
+                    );
+
+                    // Step 1: Create a Blob object
+                    console.log("[MCP] Step 1: Creating Blob object...");
+                    const blob = new Blob([jsonStr], { type: "text/plain" });
+                    console.log(`[MCP] Blob created, size: ${blob.size} bytes`);
+
+                    // Step 2: Create an Object URL
+                    console.log("[MCP] Step 2: Creating Object URL...");
+                    const url = URL.createObjectURL(blob);
+                    console.log("[MCP] Object URL created:", url);
+
+                    // Step 3: Create a temporary anchor element
+                    console.log("[MCP] Step 3: Creating anchor element...");
+                    const link = document.createElement("a");
+
+                    // Step 4: Configure the anchor element
+                    console.log("[MCP] Step 4: Configuring anchor...");
+                    link.href = url;
+                    link.download = filename;
+
+                    // Step 5: Append and click the link
+                    console.log("[MCP] Step 5: Appending and clicking...");
+                    document.body.appendChild(link);
+                    link.click();
+                    console.log("[MCP] Click triggered!");
+
+                    // Step 6: Clean up (delayed to ensure download starts)
+                    console.log("[MCP] Step 6: Scheduling cleanup...");
+                    setTimeout(() => {
+                      document.body.removeChild(link);
+                      URL.revokeObjectURL(url);
+                      console.log("[MCP] Cleanup completed");
+                    }, 100);
+
+                    console.log("[MCP] === Download trigger completed ===");
+                    return {
+                      success: true,
+                      size: blob.size,
+                      filename: filename,
+                    };
+                  } catch (error) {
+                    console.error(
+                      "[MCP] Download trigger error:",
+                      error.message
+                    );
+                    return {
+                      success: false,
+                      error: error.message,
+                    };
+                  }
+                },
+                jsonContent,
+                fileName
+              );
+
+              if (!downloadTriggerResult.success) {
+                throw new Error(
+                  `Download trigger failed: ${downloadTriggerResult.error}`
                 );
+              }
+
+              console.error(`[MCP] ✅ Download triggered successfully`);
+              console.error(
+                `[MCP] 📊 File size: ${downloadTriggerResult.size} bytes`
+              );
+              console.error(
+                `[MCP] 📄 Filename: ${downloadTriggerResult.filename}`
+              );
+              console.error(`[MCP] ⏳ Waiting for download to complete...`);
+
+              // 等待下载完成
+              try {
+                await downloadPromise;
+                console.error(`[MCP] ✅ File download and save completed!`);
+              } catch (downloadError) {
+                console.error(
+                  `[MCP] ⚠️ Download handler error: ${downloadError.message}`
+                );
+                // 继续，可能是超时但文件已保存
+              }
+
+              // 验证文件是否存在（降级检查）
+              if (!savedFilePath) {
+                // 如果下载监听器没有触发，尝试直接保存
+                console.error(
+                  `[MCP] ⚠️ Download handler didn't trigger, trying direct save...`
+                );
+                const fs = require("fs");
+                fs.writeFileSync(filePath, jsonContent);
                 savedFilePath = filePath;
                 console.error(
-                  `[MCP] ✅ Fallback: Authentication data saved via fs to: ${filePath}`
+                  `[MCP] ✅ File saved directly via fs.writeFileSync`
                 );
               }
-            } catch (fallbackError) {
+            } catch (error) {
               console.error(
-                `[MCP] ❌ Fallback save also failed: ${fallbackError.message}`
+                `[MCP] ❌ Standard blob download failed: ${error.message}`
+              );
+              throw error; // 让外层catch处理降级逻辑
+            }
+          }
+        } catch (saveError) {
+          console.error(
+            `[MCP] ⚠️ Failed to save file via Playwright: ${saveError.message}`
+          );
+          // 降级到直接文件写入
+          try {
+            const filePath = capturedData.captureInfo.filePath;
+            if (filePath) {
+              const fs = require("fs");
+              const context = this.page.context();
+              const browserCookies = await context.cookies();
+
+              const completeData = {
+                ...capturedData,
+                cookies: browserCookies.map((cookie) => ({
+                  name: cookie.name,
+                  value: cookie.value,
+                  domain: cookie.domain,
+                  path: cookie.path,
+                  expires: cookie.expires,
+                  httpOnly: cookie.httpOnly,
+                  secure: cookie.secure,
+                  sameSite: cookie.sameSite,
+                })),
+                cookieString: capturedData.cookies,
+              };
+
+              fs.writeFileSync(filePath, JSON.stringify(completeData, null, 2));
+              savedFilePath = filePath;
+              console.error(
+                `[MCP] ✅ Fallback: Authentication data saved via fs to: ${filePath}`
               );
             }
+          } catch (fallbackError) {
+            console.error(
+              `[MCP] ❌ Fallback save also failed: ${fallbackError.message}`
+            );
           }
         }
+      }
 
-        // 获取存储数据用于显示
-        console.error("[MCP] Capturing authentication data for display...");
-        const storageData = {
-          url: this.page.url(),
-          domain: new URL(this.page.url()).hostname,
-          timestamp: new Date().toISOString(),
-          loginDuration: Math.round(waitDuration / 1000),
-          cookies: [],
-          localStorage: {},
-          sessionStorage: {},
-        };
+      // 获取存储数据用于显示
+      console.error("[MCP] Capturing authentication data for display...");
+      const storageData = {
+        url: this.page.url(),
+        domain: new URL(this.page.url()).hostname,
+        timestamp: new Date().toISOString(),
+        loginDuration: Math.round(waitDuration / 1000),
+        cookies: [],
+        localStorage: {},
+        sessionStorage: {},
+      };
 
-        // 获取cookies
-        try {
-          const context = this.page.context();
-          const cookies = await context.cookies();
-          storageData.cookies = cookies.map((cookie) => ({
-            name: cookie.name,
-            value: cookie.value,
-            domain: cookie.domain,
-            path: cookie.path,
-            expires: cookie.expires,
-            httpOnly: cookie.httpOnly,
-            secure: cookie.secure,
-            sameSite: cookie.sameSite,
-          }));
-          console.error(`[MCP] Captured ${storageData.cookies.length} cookies`);
-        } catch (cookieError) {
-          console.error(`[MCP] Error getting cookies: ${cookieError.message}`);
-          storageData.cookieError = cookieError.message;
-        }
+      // 获取cookies
+      try {
+        const context = this.page.context();
+        const cookies = await context.cookies();
+        storageData.cookies = cookies.map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path,
+          expires: cookie.expires,
+          httpOnly: cookie.httpOnly,
+          secure: cookie.secure,
+          sameSite: cookie.sameSite,
+        }));
+        console.error(`[MCP] Captured ${storageData.cookies.length} cookies`);
+      } catch (cookieError) {
+        console.error(`[MCP] Error getting cookies: ${cookieError.message}`);
+        storageData.cookieError = cookieError.message;
+      }
 
-        // 获取localStorage和sessionStorage
-        try {
-          const storageResult = await this.page.evaluate(() => {
-            const result = {
-              localStorage: {},
-              sessionStorage: {},
-            };
-
-            // localStorage
-            try {
-              for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (key) result.localStorage[key] = localStorage.getItem(key);
-              }
-            } catch (e) {
-              result.localStorageError = e.message;
-            }
-
-            // sessionStorage
-            try {
-              for (let i = 0; i < sessionStorage.length; i++) {
-                const key = sessionStorage.key(i);
-                if (key)
-                  result.sessionStorage[key] = sessionStorage.getItem(key);
-              }
-            } catch (e) {
-              result.sessionStorageError = e.message;
-            }
-
-            return result;
-          });
-
-          storageData.localStorage = storageResult.localStorage;
-          storageData.sessionStorage = storageResult.sessionStorage;
-
-          console.error(
-            `[MCP] Captured ${Object.keys(storageData.localStorage).length} localStorage items`
-          );
-          console.error(
-            `[MCP] Captured ${Object.keys(storageData.sessionStorage).length} sessionStorage items`
-          );
-        } catch (storageError) {
-          console.error(`[MCP] Error getting storage: ${storageError.message}`);
-          storageData.storageError = storageError.message;
-        }
-
-        // 移除UI元素
-        try {
-          await this.page.evaluate(() => {
-            const button = document.getElementById("mcp-finish-connect-btn");
-            const message = document.getElementById("mcp-login-message");
-            if (button) button.remove();
-            if (message) message.remove();
-          });
-        } catch (uiCleanupError) {
-          console.error(
-            `[MCP] Error removing UI elements: ${uiCleanupError.message}`
-          );
-        }
-
-        console.error(`[MCP] Authentication data captured successfully!`);
-
-        // 总是保存到临时文件
-        const filePath = this.generateFilePath(url);
-        try {
-          const fs = require("fs");
-          await fs.promises.writeFile(
-            filePath,
-            JSON.stringify(storageData, null, 2),
-            "utf8"
-          );
-          savedFilePath = filePath;
-          console.error(`[MCP] ✅ File saved successfully: ${filePath}`);
-        } catch (saveError) {
-          console.error(`[MCP] ❌ Failed to save file: ${saveError.message}`);
-        }
-
-        // 自动关闭浏览器（手动模式）
-        if (autoClose) {
-          console.error("[MCP] Auto-closing browser...");
-          try {
-            await this.page.close();
-            console.error("[MCP] Browser closed successfully");
-          } catch (closeError) {
-            console.error(`[MCP] Error closing browser: ${closeError.message}`);
-          }
-        }
-
-        // 返回结果（根据是否保存了文件显示不同信息）
-        if (savedFilePath) {
-          // saveToFile=true的情况，文件已保存
-          return {
-            content: [
-              {
-                type: "text",
-                text: savedFilePath,
-              },
-            ],
+      // 获取localStorage和sessionStorage
+      try {
+        const storageResult = await this.page.evaluate(() => {
+          const result = {
+            localStorage: {},
+            sessionStorage: {},
           };
-        } else {
-          // saveToFile=false的情况，仅返回数据
-          return {
-            content: [
-              {
-                type: "text",
-                text: `# 🔐 登录认证数据捕获完成
+
+          // localStorage
+          try {
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (key) result.localStorage[key] = localStorage.getItem(key);
+            }
+          } catch (e) {
+            result.localStorageError = e.message;
+          }
+
+          // sessionStorage
+          try {
+            for (let i = 0; i < sessionStorage.length; i++) {
+              const key = sessionStorage.key(i);
+              if (key) result.sessionStorage[key] = sessionStorage.getItem(key);
+            }
+          } catch (e) {
+            result.sessionStorageError = e.message;
+          }
+
+          return result;
+        });
+
+        storageData.localStorage = storageResult.localStorage;
+        storageData.sessionStorage = storageResult.sessionStorage;
+
+        console.error(
+          `[MCP] Captured ${Object.keys(storageData.localStorage).length} localStorage items`
+        );
+        console.error(
+          `[MCP] Captured ${Object.keys(storageData.sessionStorage).length} sessionStorage items`
+        );
+      } catch (storageError) {
+        console.error(`[MCP] Error getting storage: ${storageError.message}`);
+        storageData.storageError = storageError.message;
+      }
+
+      // 移除UI元素
+      try {
+        await this.page.evaluate(() => {
+          const button = document.getElementById("mcp-finish-connect-btn");
+          const message = document.getElementById("mcp-login-message");
+          if (button) button.remove();
+          if (message) message.remove();
+        });
+      } catch (uiCleanupError) {
+        console.error(
+          `[MCP] Error removing UI elements: ${uiCleanupError.message}`
+        );
+      }
+
+      console.error(`[MCP] Authentication data captured successfully!`);
+
+      // 总是保存到临时文件
+      const filePath = this.generateFilePath(url);
+      try {
+        const fs = require("fs");
+        await fs.promises.writeFile(
+          filePath,
+          JSON.stringify(storageData, null, 2),
+          "utf8"
+        );
+        savedFilePath = filePath;
+        console.error(`[MCP] ✅ File saved successfully: ${filePath}`);
+      } catch (saveError) {
+        console.error(`[MCP] ❌ Failed to save file: ${saveError.message}`);
+      }
+
+      // 自动关闭浏览器（手动模式）
+      if (autoClose) {
+        console.error("[MCP] Auto-closing browser...");
+        try {
+          await this.page.close();
+          console.error("[MCP] Browser closed successfully");
+        } catch (closeError) {
+          console.error(`[MCP] Error closing browser: ${closeError.message}`);
+        }
+      }
+
+      // 返回结果（根据是否保存了文件显示不同信息）
+      if (savedFilePath) {
+        // saveToFile=true的情况，文件已保存
+        return {
+          content: [
+            {
+              type: "text",
+              text: savedFilePath,
+            },
+          ],
+        };
+      } else {
+        // saveToFile=false的情况，仅返回数据
+        return {
+          content: [
+            {
+              type: "text",
+              text: `# 🔐 登录认证数据捕获完成
 
 ## ⏱️ 登录信息
 - **登录耗时**: ${Math.round(waitDuration / 1000)} 秒
@@ -3089,10 +3082,10 @@ set_storage cookies=[...] localStorage={...} domain="${new URL(this.page.url()).
 \`\`\`
 
 **提示**: 认证数据已成功捕获！${autoClose ? "浏览器已自动关闭。" : "浏览器保持打开状态。"}`,
-              },
-            ],
-          };
-        }
+            },
+          ],
+        };
+      }
     } catch (error) {
       console.error("[MCP] Interactive login capture failed:", error);
 
@@ -3283,7 +3276,8 @@ You can use this data with the \`set_storage\` tool to restore authentication st
 
     // 如果指定了sessionId且不是default，使用指定的session
     if (sessionId && sessionId !== "default") {
-      const { browser: sessionBrowser, page: sessionPage } = await getBrowserBySessionId(sessionId);
+      const { browser: sessionBrowser, page: sessionPage } =
+        await getBrowserBySessionId(sessionId);
       browser = sessionBrowser;
       page = sessionPage;
       currentSessionId = sessionId;
@@ -3425,7 +3419,7 @@ You can use this data with the \`set_storage\` tool to restore authentication st
           },
           {
             localData: localStorageInput,
-            sessionData: sessionStorageInput
+            sessionData: sessionStorageInput,
           }
         );
 
