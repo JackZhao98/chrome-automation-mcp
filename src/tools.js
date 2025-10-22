@@ -363,7 +363,7 @@ const toolDefinitions = [
         projectFolder: {
           type: "string",
           description:
-            "Directory where output files will be saved. If not provided, defaults to /tmp/{session_id}",
+            "Directory where output files will be saved. If not provided, defaults to system temp directory/{session_id}",
         },
         autoCloseBrowser: {
           type: "boolean",

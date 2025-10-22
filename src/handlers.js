@@ -3,6 +3,26 @@ const { spawn, exec } = require("child_process");
 const { promisify } = require("util");
 const fs = require("fs").promises;
 const path = require("path");
+const os = require("os");
+
+// 获取跨平台的会话基础目录
+function getSessionBaseDir() {
+  const platform = os.platform();
+
+  // macOS 使用固定的 /tmp 路径
+  if (platform === "darwin") {
+    return "/tmp/chrome-browser-automation-sessions";
+  }
+
+  // Windows 和其他系统使用系统临时目录
+  const tmpDir = os.tmpdir();
+  return path.join(tmpDir, "chrome-browser-automation-sessions");
+}
+
+// 获取会话注册表文件路径
+function getSessionRegistryFile() {
+  return path.join(getSessionBaseDir(), "sessions-registry.json");
+}
 
 // 智能浏览器关闭监控器
 async function startSmartBrowserCloser(
@@ -167,8 +187,7 @@ async function performSmartBrowserClose(
 
       // 终止Chrome进程
       const sessionRegistryPath =
-        sessionRegistryFile ||
-        "/tmp/chrome-browser-automation-sessions/sessions-registry.json";
+        sessionRegistryFile || getSessionRegistryFile();
       if (sessionId && require("fs").existsSync(sessionRegistryPath)) {
         const sessions = JSON.parse(
           require("fs").readFileSync(sessionRegistryPath, "utf8")
@@ -223,13 +242,12 @@ async function performSmartBrowserClose(
     `[${closeEndTime}] === END SMART CLOSE ===\n`
   );
 }
-const os = require("os");
 
 const execAsync = promisify(exec);
 
 // 辅助函数：根据sessionId获取浏览器连接
 async function getBrowserBySessionId(sessionId) {
-  const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
+  const sessionRegistryFile = getSessionRegistryFile();
 
   if (!require("fs").existsSync(sessionRegistryFile)) {
     throw new Error(`No sessions registry found`);
@@ -306,14 +324,42 @@ const toolHandlers = {
   launch_browser: async function (args) {
     const { debugPort } = args;
 
+    // 获取平台信息
+    const platform = os.platform();
+
     // 生成sessionId和目录
     const timestamp = Date.now();
     const randomCode = Math.random().toString(36).substring(2, 8);
     const sessionId = `${timestamp}-${randomCode}`;
-    const tempUserDataDir = `/tmp/chrome-browser-automation-sessions/${sessionId}`;
+    const tempUserDataDir = path.join(getSessionBaseDir(), `session-${sessionId}`);
 
     // 设置注册表文件路径
-    const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
+    const sessionRegistryFile = getSessionRegistryFile();
+
+    // 确保基础目录存在
+    const baseDir = getSessionBaseDir();
+    try {
+      if (!require("fs").existsSync(baseDir)) {
+        require("fs").mkdirSync(baseDir, { recursive: true });
+        console.error(`[MCP] Created base directory: ${baseDir}`);
+      }
+    } catch (error) {
+      console.error(`[MCP] Failed to create base directory: ${error.message}`);
+      throw new Error(`Cannot create base directory: ${baseDir}`);
+    }
+
+    // 确保会话子目录存在
+    try {
+      if (!require("fs").existsSync(tempUserDataDir)) {
+        require("fs").mkdirSync(tempUserDataDir, { recursive: true });
+        console.error(`[MCP] Created session subdirectory: ${tempUserDataDir}`);
+      } else {
+        console.error(`[MCP] Session subdirectory already exists: ${tempUserDataDir}`);
+      }
+    } catch (error) {
+      console.error(`[MCP] Failed to create session subdirectory: ${error.message}`);
+      throw new Error(`Cannot create session subdirectory: ${tempUserDataDir}`);
+    }
 
     // 生成端口号（基于timestamp避免冲突）
     const basePort = 9222;
@@ -381,7 +427,9 @@ const toolHandlers = {
       console.error("[MCP] Auto-cleanup warning:", error.message);
     }
 
+    console.error(`[MCP] Platform: ${platform}`);
     console.error(`[MCP] Using temp user data dir: ${tempUserDataDir}`);
+    console.error(`[MCP] Directory exists: ${require("fs").existsSync(tempUserDataDir)}`);
     console.error(`[MCP] Using debug port: ${actualDebugPort}`);
 
     console.error(`[MCP] Launching browser with args:`, {
@@ -390,8 +438,6 @@ const toolHandlers = {
     });
 
     // 强制清理可能冲突的端口进程
-    const platform = os.platform();
-
     // 检查并清理端口占用
     try {
       const { exec } = require("child_process");
@@ -626,7 +672,6 @@ const toolHandlers = {
 
           // Browser always runs in visible mode
 
-          const platform = os.platform();
           const chromePath =
             platform === "darwin"
               ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -3472,7 +3517,7 @@ You can use this data with the \`set_storage\` tool to restore authentication st
     console.error("[MCP] Listing all active sessions");
 
     // 使用统一的session目录路径
-    const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
+    const sessionRegistryFile = getSessionRegistryFile();
 
     try {
       if (!require("fs").existsSync(sessionRegistryFile)) {
@@ -3615,7 +3660,7 @@ You can use this data with the \`set_storage\` tool to restore authentication st
       );
 
       try {
-        const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
+        const sessionRegistryFile = getSessionRegistryFile();
 
         if (!require("fs").existsSync(sessionRegistryFile)) {
           throw new Error(`No sessions registry found`);
@@ -4006,7 +4051,7 @@ You can use this data with the \`set_storage\` tool to restore authentication st
       `[CLOSE-BATCH] Call stack preview: ${callStack.split("\n")[2]?.trim()}`
     );
 
-    const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
+    const sessionRegistryFile = getSessionRegistryFile();
 
     if (!require("fs").existsSync(sessionRegistryFile)) {
       console.error(
@@ -4179,8 +4224,8 @@ You can use this data with the \`set_storage\` tool to restore authentication st
       "[MCP] Cleaning up inactive sessions and orphaned directories (preserving active sessions)"
     );
 
-    const sessionRegistryFile = `/tmp/chrome-browser-automation-sessions/sessions-registry.json`;
-    const baseDir = `/tmp/chrome-browser-automation-sessions`;
+    const sessionRegistryFile = getSessionRegistryFile();
+    const baseDir = getSessionBaseDir();
 
     let cleanedCount = 0;
     let orphanedDirs = [];
