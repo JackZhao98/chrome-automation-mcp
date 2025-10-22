@@ -19,27 +19,25 @@ class ChromeAutomationServer {
 
     // Session管理
     this.sessionId = this.generateSessionId();
-    // 使用固定的root path，不依赖os.tmpdir()
+    // 根据平台选择临时目录
     const platform = os.platform();
     let baseDir;
-    switch (platform) {
-      case 'darwin':
-        baseDir = '/tmp/chrome-browser-automation-sessions';
-        break;
-      case 'win32':
-        baseDir = 'C:\\temp\\chrome-browser-automation-sessions';
-        break;
-      default: // linux等
-        baseDir = '/tmp/chrome-browser-automation-sessions';
-        break;
+
+    if (platform === 'darwin') {
+      // macOS 使用固定的 /tmp 路径
+      baseDir = '/tmp/chrome-browser-automation-sessions';
+    } else {
+      // Windows 和其他系统使用系统临时目录
+      const tmpDir = os.tmpdir();
+      baseDir = path.join(tmpDir, 'chrome-browser-automation-sessions');
     }
-    
+
     // 确保baseDir目录存在
     if (!fs.existsSync(baseDir)) {
       fs.mkdirSync(baseDir, { recursive: true });
       console.error(`[MCP] Created base directory: ${baseDir}`);
     }
-    
+
     // 固定session文件夹命名规则：session-{timestamp}-{random}
     this.sessionDir = path.join(baseDir, `session-${this.sessionId}`);
     this.sessionRegistryFile = path.join(baseDir, "sessions-registry.json");
