@@ -24,6 +24,68 @@ function getSessionRegistryFile() {
   return path.join(getSessionBaseDir(), "sessions-registry.json");
 }
 
+// Tab 管理器类
+class TabManager {
+  constructor() {
+    this.tabRegistry = new Map(); // page -> { tabId, createdAt, url }
+  }
+
+  // 注册 Tab，使用 Playwright 内部的 _guid 作为 tabId
+  registerTab(page) {
+    if (!this.tabRegistry.has(page)) {
+      const tabId = page._guid || `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      this.tabRegistry.set(page, {
+        tabId,
+        createdAt: Date.now(),
+        initialUrl: page.url()
+      });
+      console.error(`[TabManager] Registered tab: ${tabId}`);
+      return tabId;
+    }
+    return this.tabRegistry.get(page).tabId;
+  }
+
+  // 获取 Tab 信息
+  getTabInfo(page) {
+    return this.tabRegistry.get(page);
+  }
+
+  // 注销 Tab
+  unregisterTab(page) {
+    const info = this.tabRegistry.get(page);
+    if (info) {
+      console.error(`[TabManager] Unregistered tab: ${info.tabId}`);
+      this.tabRegistry.delete(page);
+    }
+  }
+
+  // 按 tabId 查找 page
+  findByTabId(tabId) {
+    for (let [page, info] of this.tabRegistry.entries()) {
+      if (info.tabId === tabId) {
+        return page;
+      }
+    }
+    return null;
+  }
+
+  // 清理所有 Tab
+  clear() {
+    console.error(`[TabManager] Clearing ${this.tabRegistry.size} registered tabs`);
+    this.tabRegistry.clear();
+  }
+
+  // 清理已关闭的 Tab（根据当前活跃的 pages 列表）
+  cleanup(currentPages) {
+    for (let [page, info] of this.tabRegistry.entries()) {
+      if (!currentPages.includes(page)) {
+        console.error(`[TabManager] Cleaning up closed tab: ${info.tabId}`);
+        this.tabRegistry.delete(page);
+      }
+    }
+  }
+}
+
 // 智能浏览器关闭监控器
 async function startSmartBrowserCloser(
   outputFilePath,
@@ -1353,12 +1415,58 @@ const toolHandlers = {
   },
 
   run_script: async function (args) {
-    const { scriptPath, scriptUrl, args: scriptArgs = {} } = args;
+    const {
+      scriptPath, scriptUrl,
+      args: scriptArgs = {},
+      sessionId,
+      createNewTab = false,
+      autoCloseTab = false
+    } = args;
 
-    if (!this.browser || !this.page) {
-      throw new Error(
-        "Browser not connected. Use launch_browser or connect_browser first."
-      );
+    // ============================================
+    // 步骤 1: 根据 sessionId 获取浏览器
+    // ============================================
+    let browser, initialPage;
+
+    if (sessionId) {
+      // 使用指定 session 的浏览器
+      console.error(`[MCP] Using specified session: ${sessionId}`);
+      const sessionData = await getBrowserBySessionId(sessionId);
+      browser = sessionData.browser;
+      initialPage = sessionData.page;
+    } else {
+      // 使用当前实例的浏览器
+      if (!this.browser || !this.page) {
+        throw new Error(
+          "Browser not connected. Use launch_browser or connect_browser first."
+        );
+      }
+      browser = this.browser;
+      initialPage = this.page;
+    }
+
+    // ============================================
+    // 步骤 2: 决定使用哪个 Tab (page)
+    // ============================================
+    let page;
+    let isNewTab = false;
+
+    if (createNewTab) {
+      // 创建新 Tab
+      const context = browser.contexts()[0];
+      page = await context.newPage();
+      isNewTab = true;
+
+      const tabId = page._guid || `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      console.error(`[MCP] Created new tab with ID: ${tabId}`);
+
+      // 注册到 TabManager (如果存在)
+      if (this.tabManager) {
+        this.tabManager.registerTab(page);
+      }
+    } else {
+      // 使用现有 page
+      page = initialPage;
     }
 
     // Validate that exactly one of scriptPath or scriptUrl is provided
@@ -1405,15 +1513,30 @@ const toolHandlers = {
       });
     }
 
-    // Create an async function and execute it
+    // ============================================
+    // 步骤 3: 执行脚本
+    // ============================================
     try {
       const AsyncFunction = Object.getPrototypeOf(
         async function () {}
       ).constructor;
       const fn = new AsyncFunction("browser", "page", "args", scriptContent);
-      const result = await fn(this.browser, this.page, scriptArgs);
+      const result = await fn(browser, page, scriptArgs);
 
       console.error("[MCP] Script executed successfully");
+
+      // ============================================
+      // 步骤 4: 自动关闭 Tab (如果需要)
+      // ============================================
+      if (isNewTab && autoCloseTab) {
+        await page.close();
+        console.error(`[MCP] Auto-closed tab after script completion`);
+
+        // 从 TabManager 注销
+        if (this.tabManager) {
+          this.tabManager.unregisterTab(page);
+        }
+      }
 
       return {
         content: [
@@ -1428,6 +1551,15 @@ const toolHandlers = {
       };
     } catch (error) {
       console.error("[MCP] Script execution failed:", error);
+
+      // 错误时也关闭新创建的 Tab
+      if (isNewTab && autoCloseTab) {
+        await page.close().catch(() => {});
+        if (this.tabManager) {
+          this.tabManager.unregisterTab(page);
+        }
+      }
+
       throw new Error(`Script execution failed: ${error.message}`);
     }
   },
@@ -1439,11 +1571,81 @@ const toolHandlers = {
       args: scriptArgs = {},
       projectFolder,
       autoCloseBrowser = true,
+      sessionId: requestedSessionId,
+      createNewTab = false,
+      autoCloseTab = false
     } = args;
 
-    if (!this.browser || !this.page) {
-      throw new Error(
-        "Browser not connected. Use launch_browser or connect_browser first."
+    // ============================================
+    // 步骤 1: 根据 sessionId 获取浏览器
+    // ============================================
+    let browser, initialPage, sessionId, sessionRegistryFile;
+
+    if (requestedSessionId) {
+      // 使用指定 session 的浏览器
+      console.error(`[MCP] Using specified session: ${requestedSessionId}`);
+      const sessionData = await getBrowserBySessionId(requestedSessionId);
+      browser = sessionData.browser;
+      initialPage = sessionData.page;
+      sessionId = requestedSessionId;
+      sessionRegistryFile = getSessionRegistryFile();
+    } else {
+      // 使用当前实例的浏览器
+      if (!this.browser || !this.page) {
+        throw new Error(
+          "Browser not connected. Use launch_browser or connect_browser first."
+        );
+      }
+      browser = this.browser;
+      initialPage = this.page;
+      sessionId = this.sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      sessionRegistryFile = this.sessionRegistryFile;
+    }
+
+    // ============================================
+    // 步骤 2: 决定使用哪个 Tab (page)
+    // ============================================
+    let page;
+    let isNewTab = false;
+
+    if (createNewTab) {
+      // 创建新 Tab
+      const context = browser.contexts()[0];
+      page = await context.newPage();
+      isNewTab = true;
+
+      const tabId = page._guid || `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      console.error(`[MCP] Created new tab with ID: ${tabId} for background script`);
+
+      // 注册到 TabManager (如果存在)
+      if (this.tabManager) {
+        this.tabManager.registerTab(page);
+      }
+    } else {
+      // 使用现有 page
+      page = initialPage;
+    }
+
+    // ============================================
+    // 步骤 3: 智能处理 autoCloseBrowser
+    // ============================================
+    let finalAutoCloseBrowser = autoCloseBrowser;
+
+    // 检查是否应该自动禁用浏览器关闭
+    const shouldPreventBrowserClose = (
+      createNewTab === true &&        // 创建了新Tab
+      autoCloseTab === true &&        // 要关闭Tab
+      requestedSessionId !== undefined // 指定了sessionId（跨session）
+    );
+
+    // 如果用户没有明确设置 autoCloseBrowser，且满足禁用条件
+    if (!args.hasOwnProperty('autoCloseBrowser') && shouldPreventBrowserClose) {
+      finalAutoCloseBrowser = false;
+      console.error(
+        `[MCP] Auto-disabled browser close (cross-session with createNewTab + autoCloseTab)`
+      );
+      console.error(
+        `[MCP] Tip: Set autoCloseBrowser: true explicitly if you want to close the browser`
       );
     }
 
@@ -1457,11 +1659,6 @@ const toolHandlers = {
         "Cannot provide both scriptPath and scriptUrl. Use only one."
       );
     }
-
-    // Use the current session ID
-    const sessionId =
-      this.sessionId ||
-      `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
     // Determine output folder
     const outputDir = projectFolder || path.join("/tmp", sessionId);
@@ -1561,10 +1758,13 @@ const toolHandlers = {
     }
 
     // Store browser and page references for background task
-    const browserRef = this.browser;
-    const pageRef = this.page;
-    const sessionIdRef = this.sessionId;
-    const sessionRegistryFileRef = this.sessionRegistryFile;
+    const browserRef = browser;
+    const pageRef = page;
+    const sessionIdRef = sessionId;
+    const sessionRegistryFileRef = sessionRegistryFile;
+    const isNewTabRef = isNewTab;
+    const autoCloseTabRef = autoCloseTab;
+    const finalAutoCloseBrowserRef = finalAutoCloseBrowser;
 
     // Create an async function with enhanced page handling
     const AsyncFunction = Object.getPrototypeOf(
@@ -1938,8 +2138,28 @@ const toolHandlers = {
           `\n[${new Date().toISOString()}] Script execution completed. Output file generated: ${outputFilePath}\n`
         );
 
+        // ============================================
+        // 关闭新创建的 Tab (如果需要)
+        // ============================================
+        if (isNewTabRef && autoCloseTabRef) {
+          try {
+            await pageRef.close();
+            console.error(`[MCP] Auto-closed tab after background script completion`);
+            await fs.appendFile(
+              logFilePath,
+              `[${new Date().toISOString()}] Auto-closed tab after script completion\n`
+            );
+          } catch (closeError) {
+            console.error(`[MCP] Error closing tab: ${closeError.message}`);
+            await fs.appendFile(
+              logFilePath,
+              `[${new Date().toISOString()}] Error closing tab: ${closeError.message}\n`
+            );
+          }
+        }
+
         // 启动智能关闭监控（基于output文件存在性）
-        if (autoCloseBrowser) {
+        if (finalAutoCloseBrowserRef) {
           startSmartBrowserCloser(
             outputFilePath,
             logFilePath,
@@ -1960,7 +2180,7 @@ const toolHandlers = {
         );
 
         // 即使脚本失败，也要启动智能关闭监控（但会超时关闭）
-        if (autoCloseBrowser) {
+        if (finalAutoCloseBrowserRef) {
           await fs.appendFile(
             logFilePath,
             `[${new Date().toISOString()}] Starting smart closer due to script failure\n`
@@ -4422,4 +4642,5 @@ const filteredHandlers =
 module.exports = {
   toolHandlers: filteredHandlers,
   allToolHandlers: toolHandlers, // Export all for debugging if needed
+  TabManager, // Export TabManager class
 };

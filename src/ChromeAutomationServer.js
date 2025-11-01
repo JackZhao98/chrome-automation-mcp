@@ -1,5 +1,5 @@
 const { toolDefinitions } = require("./tools");
-const { toolHandlers } = require("./handlers");
+const { toolHandlers, TabManager } = require("./handlers");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -19,6 +19,9 @@ class ChromeAutomationServer {
 
     // Session管理
     this.sessionId = this.generateSessionId();
+
+    // Tab管理器 - 每个session独立管理自己的Tab
+    this.tabManager = new TabManager();
     // 根据平台选择临时目录
     const platform = os.platform();
     let baseDir;
@@ -243,10 +246,20 @@ class ChromeAutomationServer {
       console.error(`[CLOSE-CLEANUP] No Chrome process to kill (${processStatus})`);
     }
 
+    // 清理TabManager
+    if (this.tabManager) {
+      try {
+        this.tabManager.clear();
+        console.error(`[CLOSE-CLEANUP] TabManager cleared`);
+      } catch (tabError) {
+        console.error(`[CLOSE-CLEANUP] Error clearing TabManager: ${tabError.message}`);
+      }
+    }
+
     // 清理session记录和目录
     const sessionCleanupTime = new Date().toISOString();
     console.error(`[CLOSE-CLEANUP] Starting session cleanup at ${sessionCleanupTime}`);
-    
+
     this.unregisterSession();
     this.cleanupSessionDir();
     

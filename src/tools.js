@@ -327,6 +327,23 @@ const toolDefinitions = [
           },
           default: {},
         },
+        sessionId: {
+          type: "string",
+          description:
+            "Session ID to use for script execution. If not provided, uses current session. If provided, will connect to the specified session's browser.",
+        },
+        createNewTab: {
+          type: "boolean",
+          description:
+            "Create a new tab for this script execution. Each script runs in isolation with its own tab. Useful for running multiple scripts in parallel without interference.",
+          default: false,
+        },
+        autoCloseTab: {
+          type: "boolean",
+          description:
+            "Automatically close the tab after script completes (only works when createNewTab is true). Helps prevent tab accumulation.",
+          default: false,
+        },
       },
     },
   },
@@ -370,6 +387,23 @@ const toolDefinitions = [
           description:
             "Automatically close the browser after script execution completes. Default: true",
           default: true,
+        },
+        sessionId: {
+          type: "string",
+          description:
+            "Session ID to use for script execution. If not provided, uses current session. If provided, will connect to the specified session's browser.",
+        },
+        createNewTab: {
+          type: "boolean",
+          description:
+            "Create a new tab for this script execution. Each script runs in isolation with its own tab. Useful for running multiple scripts in parallel without interference.",
+          default: false,
+        },
+        autoCloseTab: {
+          type: "boolean",
+          description:
+            "Automatically close the tab after script completes (only works when createNewTab is true). Helps prevent tab accumulation.",
+          default: false,
         },
       },
     },
