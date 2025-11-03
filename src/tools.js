@@ -380,7 +380,7 @@ const toolDefinitions = [
         projectFolder: {
           type: "string",
           description:
-            "Directory where output files will be saved. If not provided, defaults to system temp directory/{session_id}",
+            "output folder: Set this to specify where output files (.json and .log) will be saved. If not provided, defaults to system temp directory /tmp/{session_id}. Example: '/Users/username/my-project/outputs'",
         },
         autoCloseBrowser: {
           type: "boolean",
