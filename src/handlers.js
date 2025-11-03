@@ -1660,8 +1660,28 @@ const toolHandlers = {
       );
     }
 
-    // Determine output folder
-    const outputDir = projectFolder || path.join("/tmp", sessionId);
+    // Determine output folder and sanitize path
+    let outputDir = projectFolder || path.join("/tmp", sessionId);
+
+    // Trim leading and trailing whitespace from the path
+    outputDir = outputDir.trim();
+
+    // Also trim each path segment to handle cases like "/tmp/folder /123"
+    const pathSegments = outputDir.split(path.sep);
+    outputDir = pathSegments
+      .map(segment => segment.trim())
+      .filter(segment => segment.length > 0)
+      .join(path.sep);
+
+    // Restore leading slash for absolute paths on Unix-like systems
+    if (projectFolder && projectFolder.startsWith('/')) {
+      outputDir = '/' + outputDir;
+    }
+
+    console.error(`[MCP] Sanitized output directory: "${outputDir}"`);
+    if (projectFolder && projectFolder !== outputDir) {
+      console.error(`[MCP] Original path had whitespace: "${projectFolder}"`);
+    }
 
     // Ensure output directory exists
     try {
