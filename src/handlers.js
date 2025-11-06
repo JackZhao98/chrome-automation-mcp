@@ -5,6 +5,23 @@ const fs = require("fs").promises;
 const path = require("path");
 const os = require("os");
 
+// ========== Browser Language Configuration ==========
+// Change these two constants to set browser language
+// Format: 'language-COUNTRY' (e.g., 'en-US', 'zh-CN', 'ja-JP')
+// Note: Restart MCP server after changing these values
+const BROWSER_LOCALE = "en-US";
+const ACCEPT_LANGUAGE = "en-US,en;q=0.9";
+
+// Other language examples (uncomment to use):
+// Japanese:
+// const BROWSER_LOCALE = "ja-JP";
+// const ACCEPT_LANGUAGE = "ja-JP,ja;q=0.9,en;q=0.8";
+
+// Chinese (Simplified):
+// const BROWSER_LOCALE = "zh-CN";
+// const ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9,en;q=0.8";
+// ====================================================
+
 // 获取跨平台的会话基础目录
 function getSessionBaseDir() {
   const platform = os.platform();
@@ -33,11 +50,13 @@ class TabManager {
   // 注册 Tab，使用 Playwright 内部的 _guid 作为 tabId
   registerTab(page) {
     if (!this.tabRegistry.has(page)) {
-      const tabId = page._guid || `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      const tabId =
+        page._guid ||
+        `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
       this.tabRegistry.set(page, {
         tabId,
         createdAt: Date.now(),
-        initialUrl: page.url()
+        initialUrl: page.url(),
       });
       console.error(`[TabManager] Registered tab: ${tabId}`);
       return tabId;
@@ -71,7 +90,9 @@ class TabManager {
 
   // 清理所有 Tab
   clear() {
-    console.error(`[TabManager] Clearing ${this.tabRegistry.size} registered tabs`);
+    console.error(
+      `[TabManager] Clearing ${this.tabRegistry.size} registered tabs`
+    );
     this.tabRegistry.clear();
   }
 
@@ -393,7 +414,10 @@ const toolHandlers = {
     const timestamp = Date.now();
     const randomCode = Math.random().toString(36).substring(2, 8);
     const sessionId = `${timestamp}-${randomCode}`;
-    const tempUserDataDir = path.join(getSessionBaseDir(), `session-${sessionId}`);
+    const tempUserDataDir = path.join(
+      getSessionBaseDir(),
+      `session-${sessionId}`
+    );
 
     // 设置注册表文件路径
     const sessionRegistryFile = getSessionRegistryFile();
@@ -416,10 +440,14 @@ const toolHandlers = {
         require("fs").mkdirSync(tempUserDataDir, { recursive: true });
         console.error(`[MCP] Created session subdirectory: ${tempUserDataDir}`);
       } else {
-        console.error(`[MCP] Session subdirectory already exists: ${tempUserDataDir}`);
+        console.error(
+          `[MCP] Session subdirectory already exists: ${tempUserDataDir}`
+        );
       }
     } catch (error) {
-      console.error(`[MCP] Failed to create session subdirectory: ${error.message}`);
+      console.error(
+        `[MCP] Failed to create session subdirectory: ${error.message}`
+      );
       throw new Error(`Cannot create session subdirectory: ${tempUserDataDir}`);
     }
 
@@ -491,7 +519,9 @@ const toolHandlers = {
 
     console.error(`[MCP] Platform: ${platform}`);
     console.error(`[MCP] Using temp user data dir: ${tempUserDataDir}`);
-    console.error(`[MCP] Directory exists: ${require("fs").existsSync(tempUserDataDir)}`);
+    console.error(
+      `[MCP] Directory exists: ${require("fs").existsSync(tempUserDataDir)}`
+    );
     console.error(`[MCP] Using debug port: ${actualDebugPort}`);
 
     console.error(`[MCP] Launching browser with args:`, {
@@ -591,6 +621,11 @@ const toolHandlers = {
       "--no-default-browser-check",
       `--disable-features=TranslateUI`,
       `--disable-ipc-flooding-protection`,
+      `--lang=${BROWSER_LOCALE}`, // 强制设置浏览器语言
+      `--accept-lang=${ACCEPT_LANGUAGE}`, // 设置 Accept-Language header
+      "--disable-blink-features=AutomationControlled", // 隐藏自动化特征
+      "--disable-translate", // 禁用翻译功能
+      `--force-lang=${BROWSER_LOCALE}`, // 强制语言设置（某些版本需要）
     ];
 
     // Browser always runs in visible mode
@@ -730,6 +765,11 @@ const toolHandlers = {
             "--no-default-browser-check",
             `--disable-features=TranslateUI`,
             `--disable-ipc-flooding-protection`,
+            `--lang=${BROWSER_LOCALE}`, // 强制设置浏览器语言
+            `--accept-lang=${ACCEPT_LANGUAGE}`, // 设置 Accept-Language header
+            "--disable-blink-features=AutomationControlled", // 隐藏自动化特征
+            "--disable-translate", // 禁用翻译功能
+            `--force-lang=${BROWSER_LOCALE}`, // 强制语言设置（某些版本需要）
           ];
 
           // Browser always runs in visible mode
@@ -1416,11 +1456,12 @@ const toolHandlers = {
 
   run_script: async function (args) {
     const {
-      scriptPath, scriptUrl,
+      scriptPath,
+      scriptUrl,
       args: scriptArgs = {},
       sessionId,
       createNewTab = false,
-      autoCloseTab = false
+      autoCloseTab = false,
     } = args;
 
     // ============================================
@@ -1457,7 +1498,9 @@ const toolHandlers = {
       page = await context.newPage();
       isNewTab = true;
 
-      const tabId = page._guid || `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      const tabId =
+        page._guid ||
+        `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
       console.error(`[MCP] Created new tab with ID: ${tabId}`);
 
       // 注册到 TabManager (如果存在)
@@ -1573,7 +1616,7 @@ const toolHandlers = {
       autoCloseBrowser = true,
       sessionId: requestedSessionId,
       createNewTab = false,
-      autoCloseTab = false
+      autoCloseTab = false,
     } = args;
 
     // ============================================
@@ -1598,7 +1641,9 @@ const toolHandlers = {
       }
       browser = this.browser;
       initialPage = this.page;
-      sessionId = this.sessionId || `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      sessionId =
+        this.sessionId ||
+        `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
       sessionRegistryFile = this.sessionRegistryFile;
     }
 
@@ -1614,8 +1659,12 @@ const toolHandlers = {
       page = await context.newPage();
       isNewTab = true;
 
-      const tabId = page._guid || `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-      console.error(`[MCP] Created new tab with ID: ${tabId} for background script`);
+      const tabId =
+        page._guid ||
+        `tab-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+      console.error(
+        `[MCP] Created new tab with ID: ${tabId} for background script`
+      );
 
       // 注册到 TabManager (如果存在)
       if (this.tabManager) {
@@ -1632,14 +1681,13 @@ const toolHandlers = {
     let finalAutoCloseBrowser = autoCloseBrowser;
 
     // 检查是否应该自动禁用浏览器关闭
-    const shouldPreventBrowserClose = (
-      createNewTab === true &&        // 创建了新Tab
-      autoCloseTab === true &&        // 要关闭Tab
-      requestedSessionId !== undefined // 指定了sessionId（跨session）
-    );
+    const shouldPreventBrowserClose =
+      createNewTab === true && // 创建了新Tab
+      autoCloseTab === true && // 要关闭Tab
+      requestedSessionId !== undefined; // 指定了sessionId（跨session）
 
     // 如果用户没有明确设置 autoCloseBrowser，且满足禁用条件
-    if (!args.hasOwnProperty('autoCloseBrowser') && shouldPreventBrowserClose) {
+    if (!args.hasOwnProperty("autoCloseBrowser") && shouldPreventBrowserClose) {
       finalAutoCloseBrowser = false;
       console.error(
         `[MCP] Auto-disabled browser close (cross-session with createNewTab + autoCloseTab)`
@@ -1669,13 +1717,13 @@ const toolHandlers = {
     // Also trim each path segment to handle cases like "/tmp/folder /123"
     const pathSegments = outputDir.split(path.sep);
     outputDir = pathSegments
-      .map(segment => segment.trim())
-      .filter(segment => segment.length > 0)
+      .map((segment) => segment.trim())
+      .filter((segment) => segment.length > 0)
       .join(path.sep);
 
     // Restore leading slash for absolute paths on Unix-like systems
-    if (projectFolder && projectFolder.startsWith('/')) {
-      outputDir = '/' + outputDir;
+    if (projectFolder && projectFolder.startsWith("/")) {
+      outputDir = "/" + outputDir;
     }
 
     console.error(`[MCP] Sanitized output directory: "${outputDir}"`);
@@ -2164,7 +2212,9 @@ const toolHandlers = {
         if (isNewTabRef && autoCloseTabRef) {
           try {
             await pageRef.close();
-            console.error(`[MCP] Auto-closed tab after background script completion`);
+            console.error(
+              `[MCP] Auto-closed tab after background script completion`
+            );
             await fs.appendFile(
               logFilePath,
               `[${new Date().toISOString()}] Auto-closed tab after script completion\n`
