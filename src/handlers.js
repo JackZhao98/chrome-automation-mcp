@@ -623,7 +623,6 @@ const toolHandlers = {
       `--disable-ipc-flooding-protection`,
       `--lang=${BROWSER_LOCALE}`, // 强制设置浏览器语言
       `--accept-lang=${ACCEPT_LANGUAGE}`, // 设置 Accept-Language header
-      "--disable-blink-features=AutomationControlled", // 隐藏自动化特征
       "--disable-translate", // 禁用翻译功能
       `--force-lang=${BROWSER_LOCALE}`, // 强制语言设置（某些版本需要）
     ];
@@ -767,7 +766,6 @@ const toolHandlers = {
             `--disable-ipc-flooding-protection`,
             `--lang=${BROWSER_LOCALE}`, // 强制设置浏览器语言
             `--accept-lang=${ACCEPT_LANGUAGE}`, // 设置 Accept-Language header
-            "--disable-blink-features=AutomationControlled", // 隐藏自动化特征
             "--disable-translate", // 禁用翻译功能
             `--force-lang=${BROWSER_LOCALE}`, // 强制语言设置（某些版本需要）
           ];
