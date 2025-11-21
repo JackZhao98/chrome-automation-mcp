@@ -39,27 +39,32 @@ const toolDefinitions = [
   },
   {
     name: "navigate_to",
-    description: "Navigate to a URL",
+    lite: true, // Essential for lite mode
+    description:
+      "Navigate to a URL in the browser. Use this to open web pages or refresh the current page. The browser must be launched first using launch_browser.",
     inputSchema: {
       type: "object",
       properties: {
         url: {
           type: "string",
-          description: "URL to navigate to",
+          description:
+            "The URL to navigate to (e.g., 'https://example.com'). Must be a valid HTTP/HTTPS URL.",
         },
         sessionId: {
           type: "string",
-          description: "Session ID to operate on",
+          description:
+            "Optional. Session ID to operate on. If not provided, uses the default session. Use the session ID returned by launch_browser.",
           default: "default",
         },
         waitUntil: {
           type: "string",
-          description: "When to consider navigation complete",
+          description:
+            "When to consider navigation complete. 'load' (default) waits for load event - most reliable for most pages. 'domcontentloaded' waits for DOMContentLoaded - faster but may miss some resources. 'networkidle' waits until network is idle - may timeout on pages with continuous network activity (WebSocket, polling, analytics).",
           enum: ["load", "domcontentloaded", "networkidle"],
-          default: "networkidle",
+          default: "load",
         },
       },
-      required: ["url", "sessionId"],
+      required: ["url"],
     },
   },
   {

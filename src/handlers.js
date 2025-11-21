@@ -884,39 +884,129 @@ const toolHandlers = {
   },
 
   navigate_to: async function (args) {
-    const { url, sessionId, waitUntil = "networkidle" } = args;
+    const { url, sessionId, waitUntil = "load" } = args;
+
+    // Validate required parameters
+    if (!url) {
+      const errorMsg =
+        "navigate_to: Missing required parameter 'url'. Please provide a valid URL to navigate to.";
+      console.error(`[MCP] ERROR: ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+
+    // Validate URL format
+    try {
+      new URL(url);
+    } catch (e) {
+      const errorMsg = `navigate_to: Invalid URL format: "${url}". Error: ${e.message}. Please provide a valid URL (e.g., "https://example.com").`;
+      console.error(`[MCP] ERROR: ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+
+    // Validate waitUntil parameter
+    const validWaitUntil = ["load", "domcontentloaded", "networkidle"];
+    if (waitUntil && !validWaitUntil.includes(waitUntil)) {
+      const errorMsg = `navigate_to: Invalid waitUntil value: "${waitUntil}". Valid options are: ${validWaitUntil.join(", ")}.`;
+      console.error(`[MCP] ERROR: ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
 
     let page = this.page;
+    let currentSessionId = this.sessionId || "default";
+
+    console.error(`[MCP] navigate_to: Starting navigation to "${url}"`);
+    console.error(
+      `[MCP] navigate_to: Parameters - sessionId: ${sessionId || "default"}, waitUntil: ${waitUntil}`
+    );
 
     // 如果指定了sessionId且不是default，使用指定的session
     if (sessionId && sessionId !== "default") {
-      const { page: sessionPage } = await getBrowserBySessionId(sessionId);
-      page = sessionPage;
+      console.error(
+        `[MCP] navigate_to: Attempting to get browser session: ${sessionId}`
+      );
+      try {
+        const sessionData = await getBrowserBySessionId(sessionId);
+        if (!sessionData || !sessionData.page) {
+          const errorMsg = `navigate_to: Failed to get page for session "${sessionId}". Session may not exist or browser may be closed. Available sessions: ${this.sessionId || "none"}.`;
+          console.error(`[MCP] ERROR: ${errorMsg}`);
+          throw new Error(errorMsg);
+        }
+        page = sessionData.page;
+        currentSessionId = sessionId;
+        console.error(
+          `[MCP] navigate_to: Successfully retrieved page for session: ${sessionId}`
+        );
+      } catch (error) {
+        const errorMsg = `navigate_to: Error getting browser session "${sessionId}": ${error.message}. Make sure the browser is launched and the session ID is correct.`;
+        console.error(`[MCP] ERROR: ${errorMsg}`);
+        throw new Error(errorMsg);
+      }
     }
 
     if (!page) {
-      throw new Error(
-        "No browser page available. Launch or connect to browser first."
-      );
+      const errorMsg = `navigate_to: No browser page available. Current session: ${currentSessionId}. Please launch or connect to browser first using launch_browser or connect_browser.`;
+      console.error(`[MCP] ERROR: ${errorMsg}`);
+      throw new Error(errorMsg);
     }
 
     console.error(
-      "[MCP] Navigating to:",
-      url,
-      sessionId ? `(Session: ${sessionId})` : ""
+      `[MCP] navigate_to: Navigating to "${url}" (Session: ${currentSessionId}, waitUntil: ${waitUntil})`
     );
-    await page.goto(url, { waitUntil });
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Navigated to ${url}${
-            sessionId ? ` (Session: ${sessionId})` : ""
-          }`,
-        },
-      ],
-    };
+    try {
+      const startTime = Date.now();
+      await page.goto(url, {
+        waitUntil,
+        timeout: 30000, // 30 second timeout
+      });
+      const duration = Date.now() - startTime;
+      console.error(
+        `[MCP] navigate_to: Successfully navigated to "${url}" in ${duration}ms`
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Navigated to ${url}${
+              currentSessionId !== "default"
+                ? ` (Session: ${currentSessionId})`
+                : ""
+            }`,
+          },
+        ],
+      };
+    } catch (error) {
+      const errorType = error.name || "UnknownError";
+      const errorMessage = error.message || "Unknown error occurred";
+
+      let detailedErrorMsg = `navigate_to: Failed to navigate to "${url}". `;
+
+      if (error.message && error.message.includes("Timeout")) {
+        let suggestion = "";
+        if (waitUntil === "networkidle") {
+          suggestion = `Try using "load" instead of "networkidle" - many modern pages have continuous network activity (WebSocket, polling, analytics) that prevents networkidle from being reached. `;
+        } else if (waitUntil === "load") {
+          suggestion = `The page may be loading very slowly. You can try "domcontentloaded" for faster navigation (though it may miss some resources), or increase the timeout if the page genuinely needs more time. `;
+        } else {
+          suggestion = `The page may be loading slowly. Try "load" for a more reliable wait condition. `;
+        }
+        detailedErrorMsg += `Navigation timeout after 30 seconds (waitUntil: ${waitUntil}). ${suggestion}`;
+      } else if (error.message && error.message.includes("net::ERR")) {
+        detailedErrorMsg += `Network error: ${errorMessage}. Check your internet connection or verify the URL is accessible. `;
+      } else if (error.message && error.message.includes("Navigation failed")) {
+        detailedErrorMsg += `Navigation failed: ${errorMessage}. The page may have redirected or encountered an error. `;
+      } else {
+        detailedErrorMsg += `Error type: ${errorType}, Message: ${errorMessage}. `;
+      }
+
+      detailedErrorMsg += `Session: ${currentSessionId}.`;
+
+      console.error(`[MCP] ERROR: ${detailedErrorMsg}`);
+      console.error(`[MCP] ERROR: Full error stack:`, error.stack);
+
+      throw new Error(detailedErrorMsg);
+    }
   },
 
   click: async function (args) {
@@ -4691,6 +4781,7 @@ const liteTools = [
   "close_browser",
   "close_all_browsers",
   "cleanup_sessions",
+  "navigate_to",
   "run_script",
   "run_script_background",
   "get_login",
