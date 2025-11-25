@@ -3690,12 +3690,27 @@ You can use this data with the \`set_storage\` tool to restore authentication st
       sessionStorage,
       domain,
       filePath,
+      url,
       sessionId = "default",
     } = args;
+
+    // 打印接收到的参数用于调试
+    console.error(`[MCP] set_storage called with args:`, JSON.stringify({
+      hascookies: !!cookies,
+      hasCookieString: !!cookieString,
+      hasLocalStorage: !!localStorage,
+      hasSessionStorage: !!sessionStorage,
+      domain,
+      filePath,
+      url,
+      sessionId
+    }, null, 2));
 
     let browser = this.browser;
     let page = this.page;
     let currentSessionId = this.sessionId;
+    let backgroundPage = null;
+    let visiblePage = null; // 保存用户当前看到的页面引用
 
     // 如果指定了sessionId且不是default，使用指定的session
     if (sessionId && sessionId !== "default") {
@@ -3710,6 +3725,108 @@ You can use this data with the \`set_storage\` tool to restore authentication st
       throw new Error(
         "No browser available. Launch or connect to browser first."
       );
+    }
+
+    // 如果提供了 URL，打开新标签页
+    if (url) {
+      console.error(`[MCP] Opening new tab for URL: ${url}`);
+      const context = browser.contexts()[0];
+      visiblePage = page; // 保存当前用户看到的页面
+
+      try {
+        // 使用 window.open() 在浏览器中打开真正的新标签页
+        console.error(`[MCP] Attempting to open new tab with window.open()`);
+
+        const newTabPromise = context.waitForEvent('page', { timeout: 5000 });
+
+        const openResult = await page.evaluate((targetUrl) => {
+          const newWindow = window.open(targetUrl, '_blank');
+          return {
+            opened: newWindow !== null,
+            url: targetUrl
+          };
+        }, url);
+
+        console.error(`[MCP] window.open() result:`, JSON.stringify(openResult));
+
+        // 等待新标签页创建
+        backgroundPage = await newTabPromise;
+        console.error(`[MCP] New tab captured, URL: ${backgroundPage.url()}`);
+
+        // 等待新标签页加载完成
+        await backgroundPage.waitForLoadState('domcontentloaded', { timeout: 30000 });
+        console.error(`[MCP] New tab loaded successfully: ${backgroundPage.url()}`);
+
+        // 在新标签页显示 Toast 提示
+        try {
+          await backgroundPage.evaluate(() => {
+            // 移除旧的Toast（如果存在）
+            const oldToast = document.getElementById('mcp-login-toast');
+            if (oldToast) {
+              oldToast.remove();
+            }
+
+            const toast = document.createElement('div');
+            toast.id = 'mcp-login-toast';
+            toast.textContent = 'Logging in, please wait...';
+            toast.style.cssText = `
+              position: fixed;
+              top: 20px;
+              right: 20px;
+              background-color: #4CAF50;
+              color: white;
+              padding: 16px 24px;
+              border-radius: 8px;
+              box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              font-size: 14px;
+              font-weight: 500;
+              z-index: 999999;
+              animation: slideIn 0.3s ease-out;
+            `;
+
+            // 添加动画样式
+            if (!document.getElementById('mcp-toast-styles')) {
+              const style = document.createElement('style');
+              style.id = 'mcp-toast-styles';
+              style.textContent = `
+                @keyframes slideIn {
+                  from {
+                    transform: translateX(100%);
+                    opacity: 0;
+                  }
+                  to {
+                    transform: translateX(0);
+                    opacity: 1;
+                  }
+                }
+                @keyframes slideOut {
+                  from {
+                    transform: translateX(0);
+                    opacity: 1;
+                  }
+                  to {
+                    transform: translateX(100%);
+                    opacity: 0;
+                  }
+                }
+              `;
+              document.head.appendChild(style);
+            }
+            document.body.appendChild(toast);
+          });
+          console.error(`[MCP] Toast displayed on new tab page`);
+        } catch (toastError) {
+          console.error(`[MCP] Failed to show toast:`, toastError.message);
+        }
+
+        // 使用后台标签页进行存储设置
+        page = backgroundPage;
+      } catch (error) {
+        // 如果导航失败，关闭后台标签页并抛出错误
+        await backgroundPage.close();
+        throw new Error(`Failed to navigate to URL: ${url}, ${error.message}`);
+      }
     }
 
     // 参数校验：filePath、cookies、cookieString 必须至少一个
@@ -3861,6 +3978,13 @@ You can use this data with the \`set_storage\` tool to restore authentication st
         );
       }
 
+      // 如果创建了新标签页，关闭它（Toast会随着标签页关闭自动消失）
+      if (backgroundPage) {
+        console.error(`[MCP] Closing new tab`);
+        await backgroundPage.close();
+        console.error(`[MCP] New tab closed`);
+      }
+
       return {
         content: [
           {
@@ -3869,6 +3993,8 @@ You can use this data with the \`set_storage\` tool to restore authentication st
               {
                 message: `Successfully set storage data for session ${currentSessionId}`,
                 sessionId: currentSessionId,
+                backgroundTabUsed: !!url,
+                url: url || undefined,
                 results: {
                   cookiesSet: results.cookiesSet || 0,
                   localStorageSet: results.localStorageSet || 0,
@@ -3886,6 +4012,15 @@ You can use this data with the \`set_storage\` tool to restore authentication st
         ],
       };
     } catch (error) {
+      // 确保在错误情况下也关闭新标签页（Toast会随着标签页关闭自动消失）
+      if (backgroundPage) {
+        try {
+          await backgroundPage.close();
+          console.error(`[MCP] New tab closed due to error`);
+        } catch (closeError) {
+          console.error(`[MCP] Failed to close new tab:`, closeError);
+        }
+      }
       console.error(`[MCP] Failed to set storage data:`, error);
       throw new Error(`Failed to set storage data: ${error.message}`);
     }

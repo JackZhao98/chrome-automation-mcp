@@ -539,6 +539,11 @@ const toolDefinitions = [
           description:
             "🌐 Default website domain for cookies when not specified individually. Example: 'localhost:3001', 'app.example.com'",
         },
+        url: {
+          type: "string",
+          description:
+            "🔗 Optional URL to navigate to in a background tab before setting storage. If provided, opens a new tab (without switching focus), navigates to this URL, and sets storage there. Useful for setting cookies/storage for a specific domain.",
+        },
         sessionId: {
           type: "string",
           description: "Session ID to operate on",
