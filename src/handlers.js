@@ -403,6 +403,39 @@ async function getBrowserBySessionId(sessionId) {
   return { browser, page, sessionInfo };
 }
 
+/**
+ * Get Chrome executable path based on platform
+ */
+function getChromePath() {
+  const platform = os.platform();
+  return platform === "darwin"
+    ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    : platform === "win32"
+      ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+      : "google-chrome";
+}
+
+/**
+ * Build Chrome launch arguments
+ */
+function buildChromeArgs(debugPort, userDataDir) {
+  return [
+    `--remote-debugging-port=${debugPort}`,
+    `--user-data-dir=${userDataDir}`,
+    "--no-startup-window",
+    "--disable-default-apps",
+    "--disable-background-mode",
+    "--no-first-run",
+    "--no-default-browser-check",
+    `--disable-features=TranslateUI`,
+    `--disable-ipc-flooding-protection`,
+    `--lang=${BROWSER_LOCALE}`,
+    `--accept-lang=${ACCEPT_LANGUAGE}`,
+    "--disable-translate",
+    `--force-lang=${BROWSER_LOCALE}`,
+  ];
+}
+
 const toolHandlers = {
   launch_browser: async function (args) {
     const { debugPort } = args;
@@ -607,25 +640,8 @@ const toolHandlers = {
     }
 
     // Launch Chrome with debugging port
-    const chromePath =
-      platform === "darwin"
-        ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        : platform === "win32"
-          ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-          : "google-chrome";
-
-    const chromeArgs = [
-      `--remote-debugging-port=${actualDebugPort}`,
-      `--user-data-dir=${tempUserDataDir}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      `--disable-features=TranslateUI`,
-      `--disable-ipc-flooding-protection`,
-      `--lang=${BROWSER_LOCALE}`, // 强制设置浏览器语言
-      `--accept-lang=${ACCEPT_LANGUAGE}`, // 设置 Accept-Language header
-      "--disable-translate", // 禁用翻译功能
-      `--force-lang=${BROWSER_LOCALE}`, // 强制语言设置（某些版本需要）
-    ];
+    const chromePath = getChromePath();
+    const chromeArgs = buildChromeArgs(actualDebugPort, tempUserDataDir);
 
     // Browser always runs in visible mode
 
@@ -757,27 +773,8 @@ const toolHandlers = {
           actualDebugPort = newPort;
           this.debugPort = actualDebugPort;
 
-          const chromeArgs = [
-            `--remote-debugging-port=${actualDebugPort}`,
-            `--user-data-dir=${tempUserDataDir}`,
-            "--no-first-run",
-            "--no-default-browser-check",
-            `--disable-features=TranslateUI`,
-            `--disable-ipc-flooding-protection`,
-            `--lang=${BROWSER_LOCALE}`, // 强制设置浏览器语言
-            `--accept-lang=${ACCEPT_LANGUAGE}`, // 设置 Accept-Language header
-            "--disable-translate", // 禁用翻译功能
-            `--force-lang=${BROWSER_LOCALE}`, // 强制语言设置（某些版本需要）
-          ];
-
-          // Browser always runs in visible mode
-
-          const chromePath =
-            platform === "darwin"
-              ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-              : platform === "win32"
-                ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-                : "google-chrome";
+          const chromeArgs = buildChromeArgs(actualDebugPort, tempUserDataDir);
+          const chromePath = getChromePath();
 
           this.chromeProcess = spawn(chromePath, chromeArgs, {
             detached: false,
@@ -3695,16 +3692,23 @@ You can use this data with the \`set_storage\` tool to restore authentication st
     } = args;
 
     // 打印接收到的参数用于调试
-    console.error(`[MCP] set_storage called with args:`, JSON.stringify({
-      hascookies: !!cookies,
-      hasCookieString: !!cookieString,
-      hasLocalStorage: !!localStorage,
-      hasSessionStorage: !!sessionStorage,
-      domain,
-      filePath,
-      url,
-      sessionId
-    }, null, 2));
+    console.error(
+      `[MCP] set_storage called with args:`,
+      JSON.stringify(
+        {
+          hascookies: !!cookies,
+          hasCookieString: !!cookieString,
+          hasLocalStorage: !!localStorage,
+          hasSessionStorage: !!sessionStorage,
+          domain,
+          filePath,
+          url,
+          sessionId,
+        },
+        null,
+        2
+      )
+    );
 
     let browser = this.browser;
     let page = this.page;
@@ -3737,38 +3741,45 @@ You can use this data with the \`set_storage\` tool to restore authentication st
         // 使用 window.open() 在浏览器中打开真正的新标签页
         console.error(`[MCP] Attempting to open new tab with window.open()`);
 
-        const newTabPromise = context.waitForEvent('page', { timeout: 5000 });
+        const newTabPromise = context.waitForEvent("page", { timeout: 5000 });
 
         const openResult = await page.evaluate((targetUrl) => {
-          const newWindow = window.open(targetUrl, '_blank');
+          const newWindow = window.open(targetUrl, "_blank");
           return {
             opened: newWindow !== null,
-            url: targetUrl
+            url: targetUrl,
           };
         }, url);
 
-        console.error(`[MCP] window.open() result:`, JSON.stringify(openResult));
+        console.error(
+          `[MCP] window.open() result:`,
+          JSON.stringify(openResult)
+        );
 
         // 等待新标签页创建
         backgroundPage = await newTabPromise;
         console.error(`[MCP] New tab captured, URL: ${backgroundPage.url()}`);
 
         // 等待新标签页加载完成
-        await backgroundPage.waitForLoadState('domcontentloaded', { timeout: 30000 });
-        console.error(`[MCP] New tab loaded successfully: ${backgroundPage.url()}`);
+        await backgroundPage.waitForLoadState("domcontentloaded", {
+          timeout: 30000,
+        });
+        console.error(
+          `[MCP] New tab loaded successfully: ${backgroundPage.url()}`
+        );
 
         // 在新标签页显示 Toast 提示
         try {
           await backgroundPage.evaluate(() => {
             // 移除旧的Toast（如果存在）
-            const oldToast = document.getElementById('mcp-login-toast');
+            const oldToast = document.getElementById("mcp-login-toast");
             if (oldToast) {
               oldToast.remove();
             }
 
-            const toast = document.createElement('div');
-            toast.id = 'mcp-login-toast';
-            toast.textContent = 'Logging in, please wait...';
+            const toast = document.createElement("div");
+            toast.id = "mcp-login-toast";
+            toast.textContent = "Logging in, please wait...";
             toast.style.cssText = `
               position: fixed;
               top: 20px;
@@ -3786,9 +3797,9 @@ You can use this data with the \`set_storage\` tool to restore authentication st
             `;
 
             // 添加动画样式
-            if (!document.getElementById('mcp-toast-styles')) {
-              const style = document.createElement('style');
-              style.id = 'mcp-toast-styles';
+            if (!document.getElementById("mcp-toast-styles")) {
+              const style = document.createElement("style");
+              style.id = "mcp-toast-styles";
               style.textContent = `
                 @keyframes slideIn {
                   from {
