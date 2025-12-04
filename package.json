@@ -1,6 +1,6 @@
 {
   "name": "chrome-automation-mcp",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "MCP server for browser automation with custom scripts",
   "main": "index.js",
   "bin": {
@@ -25,6 +25,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.5.0",
+    "fingerprint-generator": "^2.1.78",
+    "fingerprint-injector": "^2.1.78",
     "playwright": "^1.57.0"
   },
   "keywords": [

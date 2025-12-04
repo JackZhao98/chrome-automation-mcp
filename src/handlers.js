@@ -4,6 +4,8 @@ const { promisify } = require("util");
 const fs = require("fs").promises;
 const path = require("path");
 const os = require("os");
+const { FingerprintGenerator } = require("fingerprint-generator");
+const { FingerprintInjector } = require("fingerprint-injector");
 
 // ========== Browser Language Configuration ==========
 // Change these two constants to set browser language
@@ -433,6 +435,15 @@ function buildChromeArgs(debugPort, userDataDir) {
     `--accept-lang=${ACCEPT_LANGUAGE}`,
     "--disable-translate",
     `--force-lang=${BROWSER_LOCALE}`,
+    // Anti-fingerprinting and anti-detection arguments
+    "--disable-blink-features=AutomationControlled",
+    "--disable-infobars",
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-extensions",
+    "--disable-component-extensions-with-background-pages",
+    "--disable-automation",
   ];
 }
 
@@ -679,6 +690,22 @@ const toolHandlers = {
         const context = this.browser.contexts()[0];
         const pages = context.pages();
         this.page = pages.length > 0 ? pages[0] : await context.newPage();
+
+        // Generate and inject browser fingerprint for anti-detection
+        try {
+          const fingerprintGenerator = new FingerprintGenerator();
+          const fingerprint = fingerprintGenerator.getFingerprint({
+            devices: ['desktop'],
+            operatingSystems: [platform === 'darwin' ? 'macos' : platform === 'win32' ? 'windows' : 'linux'],
+            browsers: [{ name: 'chrome', minVersion: 110 }],
+          });
+
+          const fingerprintInjector = new FingerprintInjector();
+          await fingerprintInjector.attachFingerprintToPlaywright(this.page, fingerprint);
+          console.error('[MCP] Browser fingerprint injected successfully');
+        } catch (fpError) {
+          console.error('[MCP] Fingerprint injection failed (non-critical):', fpError.message);
+        }
 
         // Verify connection is stable by testing a simple operation
         await this.page.evaluate(() => document.readyState);
