@@ -424,6 +424,14 @@ function buildChromeArgs(debugPort, userDataDir) {
   return [
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${userDataDir}`,
+    // Solve webgl issue in virtual machine
+    "--enable-gpu",
+    "--enable-webgl",
+    "--ignore-gpu-blocklist", 
+    "--use-gl=angle", 
+    "--use-angle=default",
+    "--enable-accelerated-2d-canvas",
+    // end
     "--no-startup-window",
     "--disable-default-apps",
     "--disable-background-mode",
