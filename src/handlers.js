@@ -720,7 +720,8 @@ const toolHandlers = {
 
         console.error(`[MCP] Browser launched and connected successfully`);
 
-        // 保存session信息到实例
+        // 保存session信息到实例 (保持向后兼容性)
+        this.browser = browser;
         this.sessionId = sessionId;
         this.sessionRegistryFile = sessionRegistryFile;
 
