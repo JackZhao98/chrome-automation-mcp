@@ -371,7 +371,19 @@ async function getBrowserBySessionId(sessionId) {
 
       // Add connection event handlers
       browser.on("disconnected", () => {
-        console.error(`[MCP] Session ${sessionId} browser connection lost`);
+        console.error(`[MCP] Session ${sessionId} browser connection lost - cleaning up`);
+
+        // 自动清理该 session 的 Chrome 进程
+        if (sessionInfo.chromeProcessPid) {
+          try {
+            console.error(
+              `[MCP] Killing orphaned Chrome process for session ${sessionId}, PID: ${sessionInfo.chromeProcessPid}`
+            );
+            process.kill(sessionInfo.chromeProcessPid, "SIGKILL");
+          } catch (e) {
+            console.error(`[MCP] Failed to kill Chrome process: ${e.message}`);
+          }
+        }
       });
 
       const context = browser.contexts()[0];
@@ -427,8 +439,8 @@ function buildChromeArgs(debugPort, userDataDir) {
     // Solve webgl issue in virtual machine
     "--enable-gpu",
     "--enable-webgl",
-    "--ignore-gpu-blocklist", 
-    "--use-gl=angle", 
+    "--ignore-gpu-blocklist",
+    "--use-gl=angle",
     "--use-angle=default",
     "--enable-accelerated-2d-canvas",
     // end
@@ -689,11 +701,100 @@ const toolHandlers = {
         );
 
         // Add connection stability checks
-        this.browser.on("disconnected", () => {
+        this.browser.on("disconnected", async () => {
           console.error(
-            "[MCP] Browser connection lost - attempting to maintain session info"
+            "[MCP] Browser connection lost - cleaning up Chrome process"
           );
+
+          // 自动清理 Chrome 进程(当用户手动关闭浏览器时)
+          let killed = false;
+
+          // 方法1: 尝试使用实例中的 chromeProcess
+          if (this.chromeProcess && !this.chromeProcess.killed) {
+            try {
+              const processPid = this.chromeProcess.pid;
+              console.error(
+                `[MCP] Killing orphaned Chrome process PID: ${processPid} (from instance)`
+              );
+              this.chromeProcess.kill("SIGKILL");
+              killed = true;
+            } catch (e) {
+              console.error(
+                `[MCP] Failed to kill Chrome process from instance: ${e.message}`
+              );
+            }
+          }
+
+          // 方法2: 如果方法1失败,从 session 注册表中查找 PID
+          if (!killed && this.sessionId) {
+            try {
+              const sessionRegistryFile = getSessionRegistryFile();
+              if (require("fs").existsSync(sessionRegistryFile)) {
+                const sessions = JSON.parse(
+                  require("fs").readFileSync(sessionRegistryFile, "utf8")
+                );
+                const sessionInfo = sessions[this.sessionId];
+                if (sessionInfo && sessionInfo.chromeProcessPid) {
+                  console.error(
+                    `[MCP] Killing orphaned Chrome process PID: ${sessionInfo.chromeProcessPid} (from registry)`
+                  );
+                  process.kill(sessionInfo.chromeProcessPid, "SIGKILL");
+                  killed = true;
+                }
+              }
+            } catch (e) {
+              console.error(
+                `[MCP] Failed to kill Chrome process from registry: ${e.message}`
+              );
+            }
+          }
+
+          if (!killed) {
+            console.error(
+              "[MCP] Warning: Could not find Chrome process to kill"
+            );
+          }
+
+          // 清理实例引用
+          this.browser = null;
+          this.page = null;
         });
+
+        // 定期检查 Chrome 窗口状态,如果没有窗口就 kill 进程
+        const windowCheckInterval = setInterval(async () => {
+          try {
+            if (!this.browser || !this.chromeProcess || this.chromeProcess.killed) {
+              clearInterval(windowCheckInterval);
+              return;
+            }
+
+            // 检查浏览器是否还有活动的 context/page
+            const contexts = this.browser.contexts();
+            let hasVisiblePages = false;
+
+            for (const context of contexts) {
+              const pages = context.pages();
+              if (pages.length > 0) {
+                hasVisiblePages = true;
+                break;
+              }
+            }
+
+            // 如果没有可见页面,kill Chrome 进程
+            if (!hasVisiblePages) {
+              console.error(
+                `[MCP] No visible pages detected, killing orphaned Chrome process PID: ${this.chromeProcess.pid}`
+              );
+              clearInterval(windowCheckInterval);
+              this.chromeProcess.kill("SIGKILL");
+              this.browser = null;
+              this.page = null;
+            }
+          } catch (e) {
+            // 浏览器已断开或出错,停止检查
+            clearInterval(windowCheckInterval);
+          }
+        }, 3000); // 每 3 秒检查一次
 
         const context = this.browser.contexts()[0];
         const pages = context.pages();
@@ -703,16 +804,28 @@ const toolHandlers = {
         try {
           const fingerprintGenerator = new FingerprintGenerator();
           const fingerprint = fingerprintGenerator.getFingerprint({
-            devices: ['desktop'],
-            operatingSystems: [platform === 'darwin' ? 'macos' : platform === 'win32' ? 'windows' : 'linux'],
-            browsers: [{ name: 'chrome', minVersion: 110 }],
+            devices: ["desktop"],
+            operatingSystems: [
+              platform === "darwin"
+                ? "macos"
+                : platform === "win32"
+                  ? "windows"
+                  : "linux",
+            ],
+            browsers: [{ name: "chrome", minVersion: 110 }],
           });
 
           const fingerprintInjector = new FingerprintInjector();
-          await fingerprintInjector.attachFingerprintToPlaywright(this.page, fingerprint);
-          console.error('[MCP] Browser fingerprint injected successfully');
+          await fingerprintInjector.attachFingerprintToPlaywright(
+            this.page,
+            fingerprint
+          );
+          console.error("[MCP] Browser fingerprint injected successfully");
         } catch (fpError) {
-          console.error('[MCP] Fingerprint injection failed (non-critical):', fpError.message);
+          console.error(
+            "[MCP] Fingerprint injection failed (non-critical):",
+            fpError.message
+          );
         }
 
         // Verify connection is stable by testing a simple operation
@@ -875,6 +988,10 @@ const toolHandlers = {
           // Add connection event handlers
           this.browser.on("disconnected", () => {
             console.error("[MCP] Browser connection lost on port", debugPort);
+
+            // 清理实例引用
+            this.browser = null;
+            this.page = null;
           });
 
           const context = this.browser.contexts()[0];
