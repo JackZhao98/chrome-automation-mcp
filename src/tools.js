@@ -413,7 +413,7 @@ const toolDefinitions = [
         screenshot: {
           type: "boolean",
           description:
-            "Take a full-page screenshot after script execution. Saved to 'screenshot.png' in the output directory. Default: false",
+            "Take a screenshot after script execution. Default: false",
           default: false,
         },
       },
