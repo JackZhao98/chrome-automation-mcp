@@ -1854,6 +1854,7 @@ const toolHandlers = {
       sessionId: requestedSessionId,
       createNewTab = false,
       autoCloseTab = false,
+      screenshot = false,
     } = args;
 
     // ============================================
@@ -2442,6 +2443,27 @@ const toolHandlers = {
           logFilePath,
           `\n[${new Date().toISOString()}] Script execution completed. Output file generated: ${outputFilePath}\n`
         );
+
+        //screen shot
+        if (screenshot) {
+          try {
+            const screenShotPath = path.join(outputDir, `${scriptName}_screenshot_${timestamp}.png`);
+            console.error(`[MCP] Taking screenshot to: ${screenShotPath}`);
+            await pageRef.screenshot({ path: screenShotPath, fullPage: true });
+
+            await fs.appendFile(
+              logFilePath,
+              `[${new Date().toISOString()}] Screenshot saved to: ${screenShotPath}\n`
+            );
+          } catch (shotError) {
+            console.error(`[MCP] Screenshot failed: ${shotError.message}`);
+            await fs.appendFile(
+              logFilePath,
+              `[${new Date().toISOString()}] Screenshot failed: ${shotError.message}\n`
+            );
+          }
+        }
+
 
         // ============================================
         // 关闭新创建的 Tab (如果需要)
