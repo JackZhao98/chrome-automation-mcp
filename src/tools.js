@@ -349,6 +349,12 @@ const toolDefinitions = [
             "Automatically close the tab after script completes (only works when createNewTab is true). Helps prevent tab accumulation.",
           default: false,
         },
+        screenshot: {
+          type: "boolean",
+          description:
+            "Take a screenshot after script execution. Default: false",
+          default: false,
+        },
       },
     },
   },
