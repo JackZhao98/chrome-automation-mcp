@@ -1807,7 +1807,7 @@ const toolHandlers = {
       let result;
       if(screenshot) {
         const fs = require("fs");
-        let outputDir = path.join("/tmp", "/chrome-browser-automation-screenshots");
+        let outputDir = path.join(os.tmpdir(), "/chrome-browser-automation-screenshots");
         if(!fs.existsSync(outputDir)) {
           fs.mkdirSync(outputDir, { recursive: true });
         }
