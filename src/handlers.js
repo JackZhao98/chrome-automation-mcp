@@ -1,4 +1,4 @@
-const { chromium } = require("playwright");
+const { chromium } = require("patchright");
 const { spawn, exec } = require("child_process");
 const { promisify } = require("util");
 const fs = require("fs").promises;
@@ -6,6 +6,10 @@ const path = require("path");
 const os = require("os");
 const { FingerprintGenerator } = require("fingerprint-generator");
 const { FingerprintInjector } = require("fingerprint-injector");
+
+// Configure rebrowser-patches to bypass Runtime.enable detection
+// This is critical for evading DataDome's CDP stack trace analysis
+process.env.REBROWSER_PATCHES_RUNTIME_FIX_MODE = process.env.REBROWSER_PATCHES_RUNTIME_FIX_MODE || "alwaysIsolatedContext";
 
 // ========== Browser Language Configuration ==========
 // Change these two constants to set browser language
@@ -355,7 +359,7 @@ async function getBrowserBySessionId(sessionId) {
   }
 
   // 连接到该session的调试端口，增加重试机制
-  const { chromium } = require("playwright");
+  const { chromium } = require("patchright");
   let browser, page;
   let lastError;
 
@@ -371,7 +375,9 @@ async function getBrowserBySessionId(sessionId) {
 
       // Add connection event handlers
       browser.on("disconnected", () => {
-        console.error(`[MCP] Session ${sessionId} browser connection lost - cleaning up`);
+        console.error(
+          `[MCP] Session ${sessionId} browser connection lost - cleaning up`
+        );
 
         // 自动清理该 session 的 Chrome 进程
         if (sessionInfo.chromeProcessPid) {
@@ -763,7 +769,11 @@ const toolHandlers = {
         // 定期检查 Chrome 窗口状态,如果没有窗口就 kill 进程
         const windowCheckInterval = setInterval(async () => {
           try {
-            if (!this.browser || !this.chromeProcess || this.chromeProcess.killed) {
+            if (
+              !this.browser ||
+              !this.chromeProcess ||
+              this.chromeProcess.killed
+            ) {
               clearInterval(windowCheckInterval);
               return;
             }
@@ -1805,16 +1815,26 @@ const toolHandlers = {
       const fn = new AsyncFunction("browser", "page", "args", scriptContent);
 
       let result;
-      if(screenshot) {
+      if (screenshot) {
         const fs = require("fs");
-        let outputDir = path.join(os.tmpdir(), "/chrome-browser-automation-screenshots");
-        if(!fs.existsSync(outputDir)) {
+        let outputDir = path.join(
+          os.tmpdir(),
+          "/chrome-browser-automation-screenshots"
+        );
+        if (!fs.existsSync(outputDir)) {
           fs.mkdirSync(outputDir, { recursive: true });
         }
-        const screenshotPath = path.join(outputDir, `screenshot-${timestamp}.png`);
-        result = await fn(browser, page, { ...scriptArgs, screenshot, screenshotPath });
+        const screenshotPath = path.join(
+          outputDir,
+          `screenshot-${timestamp}.png`
+        );
+        result = await fn(browser, page, {
+          ...scriptArgs,
+          screenshot,
+          screenshotPath,
+        });
         result.screenshotPath = screenshotPath;
-      }else{
+      } else {
         result = await fn(browser, page, scriptArgs);
       }
 
@@ -2310,7 +2330,10 @@ const toolHandlers = {
 
         try {
           startMonitoring();
-          const screenshotPath = path.join(outputDir, `screenshot-${timestamp}.png`);
+          const screenshotPath = path.join(
+            outputDir,
+            `screenshot-${timestamp}.png`
+          );
           const newScriptArgs = { ...scriptArgs, screenshot, screenshotPath };
           result = await scriptFunction(browserRef, pageRef, newScriptArgs);
           stopMonitoring();
@@ -4245,7 +4268,7 @@ You can use this data with the \`set_storage\` tool to restore authentication st
           }
 
           // 3. 尝试连接到调试端口验证Chrome是否响应
-          const { chromium } = require("playwright");
+          const { chromium } = require("patchright");
           try {
             const browser = await chromium.connectOverCDP(
               `http://127.0.0.1:${sessionInfo.debugPort}`
@@ -4377,7 +4400,7 @@ You can use this data with the \`set_storage\` tool to restore authentication st
         );
 
         try {
-          const { chromium } = require("playwright");
+          const { chromium } = require("patchright");
           const browser = await chromium.connectOverCDP(
             `http://127.0.0.1:${sessionInfo.debugPort}`
           );
@@ -4826,7 +4849,7 @@ You can use this data with the \`set_storage\` tool to restore authentication st
             console.error(
               `[CLOSE-BATCH] Attempting CDP connection to session ${sessionId} on port ${sessionInfo.debugPort}`
             );
-            const { chromium } = require("playwright");
+            const { chromium } = require("patchright");
             const browser = await chromium.connectOverCDP(
               `http://127.0.0.1:${sessionInfo.debugPort}`
             );
@@ -4948,7 +4971,7 @@ You can use this data with the \`set_storage\` tool to restore authentication st
             }
 
             // 尝试连接验证Chrome响应
-            const { chromium } = require("playwright");
+            const { chromium } = require("patchright");
             const browser = await chromium.connectOverCDP(
               `http://127.0.0.1:${sessionInfo.debugPort}`
             );
