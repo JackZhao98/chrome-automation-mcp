@@ -1699,6 +1699,7 @@ const toolHandlers = {
       sessionId,
       createNewTab = false,
       autoCloseTab = false,
+      screenshot = false,
     } = args;
 
     // ============================================
@@ -1796,12 +1797,26 @@ const toolHandlers = {
     // ============================================
     // 步骤 3: 执行脚本
     // ============================================
+    const timestamp = Date.now();
     try {
       const AsyncFunction = Object.getPrototypeOf(
         async function () {}
       ).constructor;
       const fn = new AsyncFunction("browser", "page", "args", scriptContent);
-      const result = await fn(browser, page, scriptArgs);
+
+      let result;
+      if(screenshot) {
+        const fs = require("fs");
+        let outputDir = path.join(os.tmpdir(), "/chrome-browser-automation-screenshots");
+        if(!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
+        const screenshotPath = path.join(outputDir, `screenshot-${timestamp}.png`);
+        result = await fn(browser, page, { ...scriptArgs, screenshot, screenshotPath });
+        result.screenshotPath = screenshotPath;
+      }else{
+        result = await fn(browser, page, scriptArgs);
+      }
 
       console.error("[MCP] Script executed successfully");
 
@@ -1854,6 +1869,7 @@ const toolHandlers = {
       sessionId: requestedSessionId,
       createNewTab = false,
       autoCloseTab = false,
+      screenshot = false,
     } = args;
 
     // ============================================
@@ -2294,7 +2310,9 @@ const toolHandlers = {
 
         try {
           startMonitoring();
-          result = await scriptFunction(browserRef, pageRef, scriptArgs);
+          const screenshotPath = path.join(outputDir, `screenshot-${timestamp}.png`);
+          const newScriptArgs = { ...scriptArgs, screenshot, screenshotPath };
+          result = await scriptFunction(browserRef, pageRef, newScriptArgs);
           stopMonitoring();
         } catch (scriptError) {
           stopMonitoring();
